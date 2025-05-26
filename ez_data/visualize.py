@@ -45,8 +45,10 @@ def safe_interpolation(ds: xr.Dataset, x: str, y: str, z: str,
                        resolution: Union[float, dict] = 1e-3, 
                        method: str = "linear") -> xr.Dataset:
     """
-    Safe linear interpolation using scipy griddata, masking where data is not supported.
-    Resolution works like in snap_and_grid_for_plotting: defines step size along each axis.
+    Safe linear interpolation using scipy griddata, masking where data is not 
+    supported.
+    Resolution works like in snap_and_grid_for_plotting: defines step size along 
+    each axis.
     """
     df = ds[[x, y, z]].to_dataframe().dropna()
     points = df[[x, y]].values
@@ -76,9 +78,10 @@ def plot_snapped_image(ds, x, y, z, resolution=1e-3, clim=None, logz=False,
                           cmap="plasma", zero_center=False, cbar=True, 
                           interpolation=None, function='image'):
     """
-    Plot snapped quadmesh with optional color scaling and colormap customization
-    Automatically includes axis labels and colorbar label (with units, if available)
-    interpolation: None (default grid), or 'linear' for safe interpolated version
+    Plot snapped image with optional color scaling and colormap customization
+    Automatically includes axis labels and colorbar label 
+    (with units, if available)
+    interpolation: None (default grid), or 'linear' for safe interpolation
     """
     if interpolation == "linear":
         gridded = safe_interpolation(ds, x, y, z, resolution=resolution)

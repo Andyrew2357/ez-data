@@ -1,7 +1,7 @@
 import panel as pn
 import xarray as xr
 from pathlib import Path
-from .visualize import plot_snapped_quadmesh
+from .visualize import plot_snapped_image
 
 pn.extension()
 
@@ -72,7 +72,7 @@ class LiveDashboard:
             if self.clim_min.value is not None and \
                 self.clim_max.value is not None:
                 clim_val = (self.clim_min.value, self.clim_max.value)
-            plot = plot_snapped_quadmesh(
+            plot = plot_snapped_image(
                 self.ds,
                 x=self.x.value,
                 y=self.y.value,
