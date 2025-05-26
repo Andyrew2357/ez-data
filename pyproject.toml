@@ -1,0 +1,39 @@
+[project]
+name = "ez_data"
+version = "1.0.0"
+description = "Data processing tools for use with pyPulses"
+readme = "README.md"
+authors = [
+    {name = "Andrew DiFabbio", email = "avd38@mit.edu"}
+]
+maintainers = [
+    {name = "Andrew DiFabbio", email = "avd38@mit.edu"}
+]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Programming Language :: Python",
+  "Intended Audience :: Science/Research"
+]
+requires-python = ">=3.10"
+dependencies = [
+    holoviews,
+    hvplot,
+    matplotlib,
+    pyparsing,
+    scipy,
+    selenium,
+    xarray,
+    zarr
+]
+
+[project.urls]
+repository = "https://github.com/Andyrew2357/ez-data.git"
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = [
+    "ez_data", 
+]
