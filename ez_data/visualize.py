@@ -1,130 +1,91 @@
 import xarray as xr
-import pandas as pd
 import numpy as np
-from scipy.interpolate import griddata
+import pandas as pd
 import holoviews as hv
 import hvplot.xarray
-from typing import Union
+from typing import Dict
 
-def configure_plotting_theme():
-    """Optional default style"""
-    import holoviews as hv
-    hv.extension("bokeh")
-    hv.opts.defaults(
-        hv.opts.QuadMesh(show_frame=False, line_color=None, toolbar='above')
-    )
 
-def snap_and_grid_for_plotting(ds: xr.Dataset, x: str, y: str, z: str, 
-                        resolution: Union[float, dict] = 1e-3) -> xr.Dataset:
+def snap_to_grid(ds: xr.Dataset, xs: str, ys: str, zs: str, 
+                 axes: Dict[str, list]) -> xr.Dataset:
     """
-    Fast gridding using pandas grouping to snap and bin data
+    Snap data to a rectilinear grid and fill missing bins with NaN.
+    (axes are assumed to be strictly increasing or decreasing).
     """
-    if isinstance(resolution, dict):
-        res_x = resolution.get(x, 1e-3)
-        res_y = resolution.get(y, 1e-3)
-    else:
-        res_x = res_y = resolution
+    
+    xbins = np.array(axes[xs])
+    if xbins[1] < xbins[0]:
+        xbins = np.flip(xbins)
+    small_bin_x = np.min(np.abs(np.diff(xbins)))
+    xbins = np.r_[2*xbins[0] - xbins[1], xbins] + 0.5*small_bin_x
+        
+    ybins = np.array(axes[ys])
+    if ybins[1] < ybins[0]:
+        ybins = np.flip(ybins)
+    small_bin_y = np.min(np.abs(np.diff(ybins)))
+    ybins = np.r_[2*ybins[0] - ybins[1], ybins] + 0.5*small_bin_y
 
     df = pd.DataFrame({
-        x: (ds[x].values / res_x).round() * res_x,
-        y: (ds[y].values / res_y).round() * res_y,
-        z: ds[z].values,
+        xs: pd.cut(ds[xs].values, bins = xbins, labels = xbins[1:], 
+                   include_lowest = False, right = True).astype(float),
+        ys: pd.cut(ds[ys].values, bins = ybins, labels = ybins[1:],
+                   include_lowest = False, right = True).astype(float),
+        zs: ds[zs]
     })
 
-    grouped = df.groupby([y, x])[z].mean().unstack()
-    grid_y = grouped.index.values
-    grid_x = grouped.columns.values
+    grouped = df.groupby([ys, xs])[zs].mean().unstack()
+    grid_y = grouped.index.values - 0.5*small_bin_y
+    grid_x = grouped.columns.values - 0.5*small_bin_x
     grid_z = grouped.values
 
     return xr.Dataset(
-        {z: (["y", "x"], grid_z)},
-        coords={"x": grid_x, "y": grid_y}
+        {zs: (["y", "x"], grid_z)},
+        coords = {"x": grid_x, "y": grid_y}
     )
 
-def safe_interpolation(ds: xr.Dataset, x: str, y: str, z: str, 
-                       resolution: Union[float, dict] = 1e-3, 
-                       method: str = "linear") -> xr.Dataset:
-    """
-    Safe linear interpolation using scipy griddata, masking where data is not 
-    supported.
-    Resolution works like in snap_and_grid_for_plotting: defines step size along 
-    each axis.
-    """
-    df = ds[[x, y, z]].to_dataframe().dropna()
-    points = df[[x, y]].values
-    values = df[z].values
+def get_label(ds, s: str):
+    label = ds[s].attrs.get("long_name", s)
+    units = ds[s].attrs.get("units", "")
+    if units:
+        label += f" [{units}]"
+    return label
 
-    if isinstance(resolution, dict):
-        dx = resolution.get(x, 1e-3)
-        dy = resolution.get(y, 1e-3)
-    else:
-        dx = dy = resolution
+def plot_2d_data(ds: xr.Dataset, xs: str, ys: str, zs: str, 
+                 axes: Dict[str, list], plot_mode: str = 'image',
+                 plot_kwargs: dict = None, cbar_kwargs: dict = None):
+    """Plot two dimensional data snapped to provided axes"""
+    # Common plot_kwargs: cmap, clim, logz
+    
+    xlabel = get_label(ds, xs)
+    ylabel = get_label(ds, ys)
+    zlabel = get_label(ds, zs)
 
-    x_lin = np.arange(df[x].min(), df[x].max() + dx, dx)
-    y_lin = np.arange(df[y].min(), df[y].max() + dy, dy)
-    X, Y = np.meshgrid(x_lin, y_lin)
-    grid_points = np.column_stack([X.ravel(), Y.ravel()])
+    gridded = snap_to_grid(ds, xs, ys, zs, axes)
 
-    Z = griddata(points, values, grid_points, method=method)
-    mask = griddata(points, np.ones_like(values), grid_points, method="nearest")
-    Z[mask != 1] = np.nan
-
-    return xr.Dataset(
-        {z: (["y", "x"], Z.reshape(len(y_lin), len(x_lin)))},
-        coords={"x": x_lin, "y": y_lin}
+    opt = dict(
+        x = "x", y = "y",
+        xlabel = xlabel, 
+        ylabel = ylabel
     )
+    plot_kwargs = {**plot_kwargs, **opt}
+    plot_kwargs['colorbar'] = cbar_kwargs is not None
 
-def plot_snapped_image(ds, x, y, z, resolution=1e-3, clim=None, logz=False, 
-                          cmap="plasma", zero_center=False, cbar=True, 
-                          interpolation=None, function='image'):
-    """
-    Plot snapped image with optional color scaling and colormap customization
-    Automatically includes axis labels and colorbar label 
-    (with units, if available)
-    interpolation: None (default grid), or 'linear' for safe interpolation
-    """
-    if interpolation == "linear":
-        gridded = safe_interpolation(ds, x, y, z, resolution=resolution)
-    else:
-        gridded = snap_and_grid_for_plotting(ds, x, y, z, resolution)
-
-    z_label = ds[z].attrs.get("long_name", z)
-    z_units = ds[z].attrs.get("units", "")
-    if z_units:
-        z_label += f" [{z_units}]"
-
-    x_label = ds[x].attrs.get("long_name", x)
-    x_units = ds[x].attrs.get("units", "")
-    if x_units:
-        x_label += f" [{x_units}]"
-
-    y_label = ds[y].attrs.get("long_name", y)
-    y_units = ds[y].attrs.get("units", "")
-    if y_units:
-        y_label += f" [{y_units}]"
-
-    opts = dict(
-        x = "x", y = "y", 
-        cmap    = cmap,
-        xlabel  = x_label, 
-        ylabel  = y_label,
-        colorbar = cbar,
-    )
-    if clim:
-        opts["clim"] = clim
-    if logz:
-        opts["logz"] = True
-
-    match function:
+    match plot_mode:
         case 'image':
-            plot = gridded[z].hvplot.image(**opts)
-        case 'quadmesh':
-            opts['line_color'] = None
-            opts['line_width'] = 0
-            plot = gridded[z].hvplot.quadmesh(**opts)
+            plot = gridded[zs].hvplot.image(**plot_kwargs)
+        case 'quad':
+            plot_kwargs['line_color'] = None
+            plot_kwargs['line_width'] = 0
+            plot = gridded[zs].hvplot.quadmesh(**plot_kwargs)
         case _:
-            raise ValueError(f"{function} is not a valid plot function.")
-   
-    if hv.Store.current_backend == "bokeh" and cbar:
-        plot = plot.opts(colorbar_opts={'title': z_label})
+            raise ValueError(f"{plot_mode} is not implemented as a plot mode.")
+
+    if plot_kwargs.get('colorbar', False) and not cbar_kwargs:
+        cbar_kwargs = {}
+    if cbar_kwargs:
+        if hv.Store.current_backend == "bokeh" and \
+            not hasattr(cbar_kwargs, 'title'):
+            cbar_kwargs['title'] = zlabel
+        plot = plot.opts(colorbar_opts = cbar_kwargs)
+
     return plot
