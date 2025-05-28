@@ -16,14 +16,11 @@ classifiers = [
 ]
 requires-python = ">=3.10"
 dependencies = [
-    holoviews,
-    hvplot,
+    h5py,
     matplotlib,
-    pyparsing,
-    scipy,
-    selenium,
     xarray,
-    zarr
+    sqlite3,
+    tables
 ]
 
 [project.urls]
