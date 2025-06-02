@@ -18,6 +18,7 @@ requires-python = ">=3.10"
 dependencies = [
     h5py,
     matplotlib,
+    mpld3,
     pyQT5,
     xarray,
     sqlite3,

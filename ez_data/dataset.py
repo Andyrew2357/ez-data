@@ -274,7 +274,7 @@ class Dataset:
             if var_name not in df.columns:
                 continue
             
-            # Create empty array filled with Nan
+            # Create empty array filled with NaN
             data_array = np.full(shape, np.nan)
 
             # Fill in the data at the appropriate indices
@@ -293,7 +293,7 @@ class Dataset:
             if var_name not in df.columns:
                 continue
             
-            # Create empty array filled with Nan
+            # Create empty array filled with NaN
             data_array = np.full(shape, np.nan)
 
             # Fill in the data at the appropriate indices
