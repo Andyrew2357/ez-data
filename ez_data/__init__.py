@@ -1,9 +1,8 @@
-from .dataset import MeasurementDataset
-from .transforms import apply_transforms
-from .visualize import plot_pcolormesh
+from .dataset import Dataset
+from .transforms import apply_transform, apply_linear_transform
 
 __all__ = [
-    "apply_transforms",
-    "MeasurementDataset",
-    "plot_pcolormesh"
+    "apply_transform",
+    "apply_linear_transform",
+    "Dataset"
 ]
