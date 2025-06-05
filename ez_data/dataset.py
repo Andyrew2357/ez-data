@@ -56,8 +56,8 @@ class Dataset:
 
         self.global_attrs.update(**attrs)
 
-    def add_point(self, indices: List[int], coords: Dict[str, float], 
-                  data: Dict[str, float]):
+    def add_point(self, indices: List[int], coords: Dict[str, Any], 
+                  data: Dict[str, Any]):
         """Add a new point to the dataset."""
 
         if not self.nind:
@@ -244,77 +244,75 @@ class Dataset:
     
     def to_xarray(self, variables: Optional[List[str]] = None) -> xr.Dataset:
         """
-        Convert to xarray Dataset with proper structure.
-        
+        Convert to xarray Dataset with proper structure.     
         Returns a dataset where data is arranged according to the indices.
         (These form the 'logical coordinates', wheras coords form the 
         'physical coordinates')
         """
-
+        
         df = self.load_dataframe()
         if df.empty:
             return xr.Dataset()
-        
+
         if not variables:
             variables = [col for col in df.columns 
                          if col not in self.max_indices]
-        coord_v   = self.coord_vars
-        data_v    = [var for var in variables if var not in coord_v]
+        coord_v = self.coord_vars or []
+        data_v = [var for var in variables if var not in coord_v]
+        idx_cols = list(self.max_indices.keys())
+        shape = tuple(self.max_indices[dim] + 1 for dim in idx_cols)
+        dims = tuple(idx_cols)
 
-        # Get the shape from max indices
-        shape = tuple(self.max_indices[dim] + 1 for dim in self.max_indices)
+        # Compute flattened index for vectorized assignment
+        multi_idx = tuple(df[dim].astype(int).values for dim in idx_cols)
+        flat_idx = np.ravel_multi_index(multi_idx, shape)
 
-        # Create logical coordinate arrays for the indices
-        inds = {dim: np.arange(idx + 1) for dim, idx 
-                in self.max_indices.items()}
-        
-        # Create the structured dataset
-        data_vars = {}
-        for var_name in data_v:
-            if var_name not in df.columns:
-                continue
-            
-            # Create empty array filled with NaN or NaT
-            if type(df[var_name][0]) in [str, np.datetime64]:
-                data_array = np.full(shape, 'NaT', dtype = 'datetime64[s]')
+        def is_datetime_column(series: pd.Series) -> bool:
+            dtype = series.dtype
+            if pd.api.types.is_datetime64_any_dtype(dtype):
+                return True
+            if pd.api.types.is_object_dtype(dtype) or \
+                pd.api.types.is_string_dtype(dtype):
+                sample = series.dropna().astype(str).head(5)
+                try:
+                    pd.to_datetime(sample, errors='raise')
+                    return True
+                except Exception:
+                    return False
+            return False
+
+        def fill_array(series: pd.Series, is_time: bool):
+            values = series.copy()
+            if is_time:
+                values = pd.to_datetime(values).astype("datetime64[ns]")
+                arr = np.full(np.prod(shape), np.datetime64("NaT"), 
+                              dtype="datetime64[ns]")
             else:
-                data_array = np.full(shape, np.nan)
+                values = values.astype(float)
+                arr = np.full(np.prod(shape), np.nan, dtype=float)
+            arr[flat_idx] = values
+            return arr.reshape(shape)
 
-            # Fill in the data at the appropriate indices
-            for _, row in df.iterrows():
-                indices_tuple = tuple(int((row[dim])) for dim 
-                                      in self.max_indices)
-                # Only fill if all indices are valid
-                if all(idx >= 0 for idx in indices_tuple):
-                    data_array[indices_tuple] = row[var_name]
-
-            attrs = self.variable_attrs.get(var_name, {})
-            data_vars[var_name] = (inds, data_array, attrs)
+        data_vars = {}
+        for name in data_v:
+            if name not in df.columns:
+                continue
+            is_time = is_datetime_column(df[name])
+            arr = fill_array(df[name], is_time)
+            attrs = self.variable_attrs.get(name, {})
+            data_vars[name] = (dims, arr, attrs)
 
         coord_vars = {}
-        for var_name in coord_v:
-            if var_name not in df.columns:
+        for name in coord_v:
+            if name not in df.columns:
                 continue
-            
-            # Create empty array filled with NaN or NaT
-            if type(df[var_name][0]) in [str, np.datetime64]:
-                data_array = np.full(shape, 'NaT', dtype = 'datetime64[s]')
-            else:
-                data_array = np.full(shape, np.nan)
+            is_time = is_datetime_column(df[name])
+            arr = fill_array(df[name], is_time)
+            attrs = self.variable_attrs.get(name, {})
+            coord_vars[name] = (dims, arr, attrs)
 
-            # Fill in the data at the appropriate indices
-            for _, row in df.iterrows():
-                indices_tuple = tuple(int((row[dim])) for dim 
-                                      in self.max_indices)
-                # Only fill if all indices are valid
-                if all(idx >= 0 for idx in indices_tuple):
-                    data_array[indices_tuple] = row[var_name]
-
-            attrs = self.variable_attrs.get(var_name, {})
-            coord_vars[var_name] = (inds, data_array, attrs)
-
-        return xr.Dataset(coords = coord_vars, data_vars = data_vars, 
-                          attrs = self.global_attrs)
+        return xr.Dataset(coords=coord_vars, data_vars=data_vars, 
+                          attrs=self.global_attrs)
 
     def get_flat_data(self) -> pd.DataFrame:
         """Get the data in flat format."""
