@@ -1,5 +1,5 @@
 """
-Compatibility tools for processing data taken using smarty sweep or special 
+Compatibility tools for processing data taken using smarty sweep / special 
 measure.
 """
 
@@ -34,15 +34,16 @@ def dat_to_pandas(folder: str, suffix: str,
     
     return D
 
-def pandas_to_xarray(df: pd.DataFrame, coord_attr: dict, 
-                     data_attr: dict, global_attr: dict = {}) -> xr.Dataset:
+def pandas_to_xarray(df: pd.DataFrame, coord_attr: dict, data_attr: dict, 
+                     global_attr: dict = {}, ignored_attr: List[str] = []
+                     ) -> xr.Dataset:
     """
     Convert pandas DataFrame and applicable metadata into an xarray Dataset
     """
     
     idx_cols = [col for col in df.columns if not (col in coord_attr or \
-                                                  col in data_attr)]
-    max_indices = {col: df[col].max() for col in idx_cols}
+                                col in data_attr or col in ignored_attr)]
+    max_indices = {col: int(df[col].max()) for col in idx_cols}
     # Get the shape from max_indices
     shape = tuple(max_indices[dim] + 1 for dim in max_indices)
 
@@ -55,8 +56,11 @@ def pandas_to_xarray(df: pd.DataFrame, coord_attr: dict,
         if var_name not in df.columns:
             continue
         
-        # Create empty array filled with NaN
-        data_array = np.full(shape, np.nan)
+        # Create empty array filled with NaN or NaT
+        if type(df[var_name][0]) in [str, np.datetime64]:
+            data_array = np.full(shape, 'NaT', dtype = 'datetime64[s]')
+        else:
+            data_array = np.full(shape, np.nan)
 
         # Fill in the data at the appropriate indices
         for _, row in df.iterrows():
@@ -65,15 +69,18 @@ def pandas_to_xarray(df: pd.DataFrame, coord_attr: dict,
             if all(idx >= 0 for idx in indices_tuple):
                 data_array[indices_tuple] = row[var_name]
 
-        data_vars[var_name] = (inds, data_array, data_attr)
+        data_vars[var_name] = (inds, data_array, data_attr[var_name])
     
     coord_vars = {}
     for var_name in coord_attr:
         if var_name not in df.columns:
             continue
         
-        # Create empty array filled with NaN
-        data_array = np.full(shape, np.nan)
+        # Create empty array filled with NaN or NaT
+        if type(df[var_name][0]) in [str, np.datetime64]:
+            data_array = np.full(shape, 'NaT', dtype = 'datetime64[s]')
+        else:
+            data_array = np.full(shape, np.nan)
 
         # Fill in the data at the appropriate indices
         for _, row in df.iterrows():
@@ -82,7 +89,7 @@ def pandas_to_xarray(df: pd.DataFrame, coord_attr: dict,
             if all(idx >= 0 for idx in indices_tuple):
                 data_array[indices_tuple] = row[var_name]
 
-        coord_vars[var_name] = (inds, data_array, coord_attr)
+        coord_vars[var_name] = (inds, data_array, coord_attr[var_name])
 
     return xr.Dataset(coords = coord_vars, data_vars = data_vars, 
                       attrs = global_attr)

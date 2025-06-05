@@ -274,8 +274,11 @@ class Dataset:
             if var_name not in df.columns:
                 continue
             
-            # Create empty array filled with NaN
-            data_array = np.full(shape, np.nan)
+            # Create empty array filled with NaN or NaT
+            if type(df[var_name][0]) in [str, np.datetime64]:
+                data_array = np.full(shape, 'NaT', dtype = 'datetime64[s]')
+            else:
+                data_array = np.full(shape, np.nan)
 
             # Fill in the data at the appropriate indices
             for _, row in df.iterrows():
@@ -293,8 +296,11 @@ class Dataset:
             if var_name not in df.columns:
                 continue
             
-            # Create empty array filled with NaN
-            data_array = np.full(shape, np.nan)
+            # Create empty array filled with NaN or NaT
+            if type(df[var_name][0]) in [str, np.datetime64]:
+                data_array = np.full(shape, 'NaT', dtype = 'datetime64[s]')
+            else:
+                data_array = np.full(shape, np.nan)
 
             # Fill in the data at the appropriate indices
             for _, row in df.iterrows():
