@@ -9,7 +9,7 @@ import numpy as np
 import os
 from typing import Callable, Dict, List, Optional, Union
 
-def dat_to_pandas(folder: str, suffix: str, 
+def dat_to_pandas(folder: str, suffix: Union[str, List[str]], 
                   index_func: Callable[[List[float]], 
                     Union[float, List[float]]] = lambda x: x,
                   column_mapping: Optional[Dict[str, str]] = None, 
@@ -19,8 +19,13 @@ def dat_to_pandas(folder: str, suffix: str,
     function and renaming columns based on provided dictionary
     """
 
-    files = [os.path.join(folder, path) for path in os.listdir(folder)
-             if path.endswith(suffix)]
+    if type(suffix) == str:
+        suffix = (suffix,)
+
+    files = []
+    for suff in suffix:
+        files.extend([os.path.join(folder, path) for path in os.listdir(folder) 
+                      if path.endswith(suff)])
     
     col_map = {v: k for k, v in column_mapping.items()}
     for path in files:
