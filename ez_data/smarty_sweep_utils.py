@@ -47,7 +47,6 @@ def pandas_to_xarray(df: pd.DataFrame, coord_attr: dict, data_attr: dict,
     shape = tuple(max_indices[col] + 1 for col in idx_cols)
     dims = tuple(idx_cols)
 
-    inds = {dim: np.arange(size) for dim, size in zip(dims, shape)}
     multi_idx = tuple(df[col].astype(int).values for col in idx_cols)
     flat_idx = np.ravel_multi_index(multi_idx, shape)
 
