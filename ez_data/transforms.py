@@ -3,6 +3,19 @@ import pandas as pd
 import xarray as xr
 from typing import Callable, List, Tuple, Union
 
+def preserve_attrs(obj, col, data, dims, xr_output_type):
+    # Get attrs if variable/coord exists
+    attrs = {}
+    if col in obj:
+        attrs = obj[col].attrs.copy()
+    # Create new DataArray with attrs
+    da = xr.DataArray(data, dims=dims, attrs=attrs)
+    if xr_output_type == 'coords':
+        obj = obj.assign_coords({col: da})
+    else:
+        obj[col] = da
+    return obj
+
 def apply_transform(obj: Union[pd.DataFrame, xr.Dataset], 
                     func: Callable[[Union[float, Tuple[float]]], 
                                     Union[float, Tuple[float]]], 
@@ -37,10 +50,8 @@ def apply_transform(obj: Union[pd.DataFrame, xr.Dataset],
         dims = obj[input_cols[0]].dims
         for i, col in enumerate(output_cols):
             data = results[i]
-            if xr_output_type == 'coords':
-                obj = obj.assign_coords({col: (dims, data)})
-            else:
-                obj[col] = (dims, data)
+            preserve_attrs(obj, col, data, dims, xr_output_type)
+
         return obj
 
     else:
@@ -84,10 +95,8 @@ def apply_linear_transform(obj: Union[pd.DataFrame, xr.Dataset],
         for i, col in enumerate(output_cols):
             data = Y[..., i]
             dims = obj[input_cols[0]].dims  # Use dims from first input var
-            if xr_output_type == 'coords':
-                obj = obj.assign_coords({col: (dims, data)})
-            else:
-                obj[col] = (dims, data)
+            preserve_attrs(obj, col, data, dims, xr_output_type)
+            
         return obj
 
     else:

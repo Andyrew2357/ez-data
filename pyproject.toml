@@ -21,6 +21,7 @@ dependencies = [
     "mpld3",
     "pyQT5",
     "xarray",
+    "xarray-lmfit",
     "scipy",
     "tables"
 ]
