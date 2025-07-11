@@ -7,13 +7,13 @@ import pandas as pd
 import xarray as xr
 import numpy as np
 import os
-from typing import Callable, Dict, List, Optional, Union
+from typing import Callable, Dict, List
 
-def dat_to_pandas(folder: str, suffix: Union[str, List[str]] = None,
+def dat_to_pandas(folder: str, suffix: str | List[str] = None,
                   files: List[str] = None, 
                   index_func: Callable[[List[float]], 
-                    Union[float, List[float]]] = lambda x: x,
-                  column_mapping: Optional[Dict[str, str]] = None, 
+                    float | List[float]] = lambda x: x,
+                  column_mapping: Dict[str, str] = None, 
                   delimiter = r"\s*\t\s*") -> pd.DataFrame:
     """
     Read scan into a pandas DataFrame, inferring indices based on provided

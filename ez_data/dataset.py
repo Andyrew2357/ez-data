@@ -5,7 +5,7 @@ import pickle
 import json
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List
 
 import sqlite3
 import h5py
@@ -18,11 +18,11 @@ class Dataset:
     efficiently storing data incrementally. Converts to xarray for analysis.
     """
 
-    def __init__(self, path: Union[str, Path],      # path to save/load dataset
+    def __init__(self, path: str | Path,            # path to save/load dataset
                  storage_backend: str = 'sqlite',   # 'hdf5' or 'sqlite'
                  flush_interval: float = 30.0,      # seconds
                  flush_batch_size: int = 500,       # max points before flushing
-                 index_names: Optional[List[str]] = None):
+                 index_names: List[str] = None):
         
         self.path = Path(path)
         self.storage_backend = storage_backend
@@ -242,7 +242,7 @@ class Dataset:
         conn.close()
         return df
     
-    def to_xarray(self, variables: Optional[List[str]] = None) -> xr.Dataset:
+    def to_xarray(self, variables: List[str]= None) -> xr.Dataset:
         """
         Convert to xarray Dataset with proper structure.     
         Returns a dataset where data is arranged according to the indices.
