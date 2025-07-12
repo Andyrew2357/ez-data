@@ -185,3 +185,107 @@ def waterfall(x: DARR, y: DARR, z: DARR,
         return lines, c_bar
     
     return lines
+
+"""Accessors for xarray Datasets and DataArrays"""
+
+@xr.register_dataset_accessor("ezplt")
+class ezpltDatasetAccessor():
+    def __init__(self, xr_obj: xr.Dataset):
+        self._obj = xr_obj
+
+    def _get_arr(self, a: str | DARR) -> DARR:
+        if isinstance(a, str):
+            try:
+                return self._obj[a]
+            except:
+                raise ValueError(f"'{a}' is unrecognized.")
+
+    def errorplot(self, 
+                  x: str | DARR, y: str | DARR,
+                  xerr: str | DARR = None, yerr: str | DARR = None,
+                  errstyle: str = 'bar', 
+                  ax: Axes = None, 
+                  ekwargs: dict = {}, **kwargs
+                  ) -> ErrorbarContainer | SHADE_EPLOT:
+        """Accessor to errorplot"""
+        
+        x = self._get_arr(x)
+        y = self._get_arr(y)
+        xerr = self._get_arr(xerr)
+        yerr = self._get_arr(yerr)
+        return errorplot(x, y, xerr, yerr, errstyle, ax, ekwargs, **kwargs)
+    
+    def waterfall(self,
+                  x: str | DARR, y: str | DARR, z: str | DARR,
+                  reduce_zdim: str = None,
+                  ax: Axes = None, 
+                  cmap: str | colors.Colormap = 'RdBu', 
+                  norm: cm.ScalarMappable = None,
+                  cbar: bool = True,
+                  logz: bool = False, 
+                  vmin: float = None, vmax: float = None, 
+                  **kwargs) -> WATERFALL:
+        """Accessor to waterfall"""
+
+        x = self._get_arr(x)
+        y = self._get_arr(y)
+        z = self._get_arr(z)
+        if reduce_zdim:
+            z = z.mean(dim = reduce_zdim)
+
+        return waterfall(x, y, z, ax, 
+                         cmap, norm, cbar, logz, vmin, vmax, **kwargs)
+    
+@xr.register_dataarray_accessor("ezplt")
+class ezpltDataArrayAccessor():
+    def __init__(self, xr_obj: xr.DataArray):
+        self._obj = xr_obj
+
+    def _get_arr(self, a: str | DARR) -> DARR:
+        if isinstance(a, str):
+            try:
+                return self._obj[a]
+            except:
+                raise ValueError(f"'{a}' is unrecognized.")
+
+    def errorplot(self, 
+                  x: str | DARR = None, y: str | DARR = None,
+                  xerr: str | DARR = None, yerr: str | DARR = None,
+                  errstyle: str = 'bar', 
+                  ax: Axes = None, 
+                  ekwargs: dict = {}, **kwargs
+                  ) -> ErrorbarContainer | SHADE_EPLOT:
+        """Accessor to errorplot"""
+        
+        if x is None and y is None:
+            raise ValueError("One of 'x' or 'y' must be provided.")
+        x = self._obj if x is None else self._get_arr(x)
+        y = self._obj if y is None else self._get_arr(y)
+        xerr = self._get_arr(xerr)
+        yerr = self._get_arr(yerr)
+        return errorplot(x, y, xerr, yerr, errstyle, ax, ekwargs, **kwargs)
+    
+    def waterfall(self,
+                  x: str | DARR = None, y: str | DARR = None, 
+                  z: str | DARR = None, reduce_zdim: str = None,
+                  ax: Axes = None, 
+                  cmap: str | colors.Colormap = 'RdBu', 
+                  norm: cm.ScalarMappable = None,
+                  cbar: bool = True,
+                  logz: bool = False, 
+                  vmin: float = None, vmax: float = None, 
+                  **kwargs) -> WATERFALL:
+        """Accessor to waterfall"""
+
+        if (x is None and (y is None or z is None)) or \
+            (y is None and (x is None or z is None)) or \
+            (z is None and (y is None or x is None)):
+            raise ValueError("At most one of 'x', 'y', and 'z' can be None.")
+        x = self._obj if x is None else self._get_arr(x)
+        y = self._obj if y is None else self._get_arr(y)
+        z = self._obj if z is None else self._get_arr(z)
+        if reduce_zdim:
+            z = z.mean(dim = reduce_zdim)
+
+        return waterfall(x, y, z, ax, 
+                         cmap, norm, cbar, logz, vmin, vmax, **kwargs)

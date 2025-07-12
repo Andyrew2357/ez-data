@@ -5,7 +5,7 @@ import xarray as xr
 from typing import Callable, List, Tuple
 
 @xr.register_dataset_accessor("ez")
-class ezAccessor():
+class ezDatasetAccessor():
     def __init__(self, xr_obj: xr.Dataset):
         self._obj = xr_obj
 
@@ -36,7 +36,7 @@ class ezAccessor():
                                       output_cols, xr_output_type)
 
 @xr.register_dataarray_accessor("ez")
-class ezAccessor():
+class ezDataArrayAccessor():
     def __init__(self, xr_obj: xr.DataArray):
         self._obj = xr_obj
 
