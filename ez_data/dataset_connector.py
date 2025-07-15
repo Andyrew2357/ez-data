@@ -10,9 +10,10 @@ from typing import Any, Dict, List
 import sqlite3
 import h5py
 
-class Dataset:
+class DsetConnector:
     """
-    Efficient dataset for structured experimental data using pandas backend.
+    Efficient writing/ reading for structured experimental data using pandas 
+    backend.
 
     This class maintains sampling structure through index coordinates while
     efficiently storing data incrementally. Converts to xarray for analysis.

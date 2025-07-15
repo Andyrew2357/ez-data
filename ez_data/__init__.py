@@ -1,4 +1,4 @@
-from .dataset import Dataset
+from .dataset_connector import DsetConnector
 from .ezplt import errorplot, get_xr_label, waterfall
 from .smarty_sweep_utils import dat_to_pandas, pandas_to_xarray
 from .utils import (align_dims, apply_transform, apply_linear_transform, 
@@ -9,7 +9,7 @@ __all__ = [
     "apply_transform",
     "apply_linear_transform",
     "bin_to_grid",
-    "Dataset",
+    "DsetConnector",
     "dat_to_pandas",
     "errorplot",
     "get_xr_label",

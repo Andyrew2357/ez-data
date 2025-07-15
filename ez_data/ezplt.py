@@ -1,3 +1,5 @@
+"""Tools for plotting; compatible with xarray objects"""
+
 import matplotlib.pyplot as plt
 from matplotlib import cm
 from matplotlib import colors

@@ -1,3 +1,5 @@
+"""Accessors to utilities for xarray objects"""
+
 from .utils import (align_dims, apply_transform, apply_linear_transform, 
                     bin_to_grid, smart_sel)
 

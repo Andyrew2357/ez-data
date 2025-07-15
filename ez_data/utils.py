@@ -1,6 +1,9 @@
+"""General tools for manipulating xarray and pandas objects"""
+
 import numpy as np
 import pandas as pd
 import xarray as xr
+import warnings
 from typing import Callable, List, Tuple
 
 XR_OBJ = xr.Dataset | xr.DataArray
@@ -312,10 +315,11 @@ def _bin_dataframe(df: pd.DataFrame, coords: List[str],
     # Group by bin indices
     group_cols = [f"_bin_{dim}" for dim in coords]
     if use_func_directly:
-        grouped = df.groupby(group_cols).agg(lambda g: agg_func(g)).reset_index()
+        grouped = df.groupby(group_cols).agg(
+            lambda g: agg_func(g)).reset_index()
     else:
         grouped = df.groupby(group_cols).agg(agg_func).reset_index()
-        
+
     # Add physical coordinate columns back into grouped df
     for dim in coords:
         edges = bin_edges[dim]
@@ -348,10 +352,26 @@ def _rebuild_xarray(df: pd.DataFrame, original: XR_OBJ, coords: List[str]
     multi_idx = tuple(df[f"_bin_{dim}"].values for dim in coords)
     flat_idx = np.ravel_multi_index(multi_idx, shape)
 
-    def fill_array(values, dtype=float, fill_value = np.nan):
-        arr = np.full(np.prod(shape), fill_value, dtype = dtype)
-        arr[flat_idx] = values
-        return arr.reshape(shape)
+    def fill_array(values, fill_value=np.nan):
+        values = np.asarray(values)
+        dtype = values.dtype
+
+        with warnings.catch_warnings(): # annoying warning involving datetimes
+            warnings.simplefilter("ignore", category=RuntimeWarning)
+
+            if np.issubdtype(dtype, np.datetime64):
+                # Force consistent datetime dtype at nanosecond precision
+                dtype = np.dtype("datetime64[ns]")
+                fill_value = np.datetime64("NaT", "ns")
+                fill = np.full(np.prod(shape), fill_value, dtype=dtype)
+                valid_mask = ~pd.isnull(values)
+                if np.any(valid_mask):
+                    fill[flat_idx[valid_mask]] = values[valid_mask]
+            else:
+                fill = np.full(np.prod(shape), fill_value, dtype=dtype)
+                fill[flat_idx] = values
+
+        return fill.reshape(shape)
 
     # Fill data_vars and extra coordinates
     arrays = {var: (dims, fill_array(df[var].values)) for var in data_vars}
