@@ -239,15 +239,18 @@ def bin_to_grid(data: XR_OBJ | pd.DataFrame, reduce: str | Callable = 'mean',
     """
     Bin irregular data to a regular N-dimensional grid using physical coords.
 
-    Parameters:
-        data: The input data to be binned.
-        reduce: Reduction function to use. 
-            Options: 'mean', 'median', 'max', 'min' or a callable.
-        **bins: dict[str, int | array-like]
-            Keyword arguments mapping coordinate names to either number of bins 
-            or explicit bin edges.
+    Parameters
+    ----------
+    data: Dataset or DataArray
+        input data to be binned.
+    reduce: str or callable
+        One of  {'mean', 'median', 'max', 'min'} or a callable.
+    **bins: dict
+        keyword arguments mapping coordinate names to either number of bins 
+        or explicit bin edges.
 
-    Returns:
+    Returns
+    -------
         Binned result with the same type as data passed.
     """
 
@@ -255,8 +258,8 @@ def bin_to_grid(data: XR_OBJ | pd.DataFrame, reduce: str | Callable = 'mean',
         df = data.to_dataframe().reset_index()
         coords = list(bins.keys())
         dims_to_strip = [d for d in data.dims if d not in data.coords]
-        binned = _bin_dataframe(df, coords, reduce, bins)
-        result = _rebuild_xarray(binned, data, coords)
+        binned, bin_centers = _bin_dataframe(df, coords, reduce, bins)
+        result = _rebuild_xarray(binned, data, coords, bin_centers)
 
         # Clean up: remove any dim-like leftovers not used as bins or coords
         if isinstance(data, xr.Dataset):
@@ -271,15 +274,16 @@ def bin_to_grid(data: XR_OBJ | pd.DataFrame, reduce: str | Callable = 'mean',
     
     elif isinstance(data, pd.DataFrame):
         coords = list(bins.keys())
-        return _bin_dataframe(data, coords, reduce, bins)
+        binned, bin_centers = _bin_dataframe(data, coords, reduce, bins)
+        return binned
     
     else:
         raise TypeError(
             "Input must be xr.DataArray, xr.Dataset, or pd.DataFrame"
         )
 
-def _bin_dataframe(df: pd.DataFrame, coords: List[str], 
-                   reduce: str | Callable, binspec: dict) -> pd.DataFrame:
+def _bin_dataframe(df: pd.DataFrame, coords: List[str],  reduce: str | Callable, 
+                   binspec: dict) -> Tuple[pd.DataFrame, dict]:
     # Parse bin edges
     bin_edges = {}
     for dim in coords:
@@ -291,7 +295,8 @@ def _bin_dataframe(df: pd.DataFrame, coords: List[str],
 
     # Assign bin indices for each coordinate
     for dim in coords:
-        df[f"_bin_{dim}"] = pd.cut(df[dim], bins=bin_edges[dim], labels = False)
+        df[f"_bin_{dim}"] = pd.cut(df[dim], bins=bin_edges[dim], labels = False, 
+                                   include_lowest = True, right = False)
 
     # Drop rows where any bin assignment failed
     df = df.dropna(subset = [f"_bin_{dim}" for dim in coords]).copy()
@@ -321,15 +326,17 @@ def _bin_dataframe(df: pd.DataFrame, coords: List[str],
         grouped = df.groupby(group_cols).agg(agg_func).reset_index()
 
     # Add physical coordinate columns back into grouped df
+    center_map = {}
     for dim in coords:
         edges = bin_edges[dim]
         centers = 0.5 * (edges[:-1] + edges[1:])
+        center_map[dim] = centers.copy()
         grouped[dim] = grouped[f"_bin_{dim}"].map(lambda i: centers[i])
 
-    return grouped
+    return grouped, center_map
 
-def _rebuild_xarray(df: pd.DataFrame, original: XR_OBJ, coords: List[str]
-                    ) -> XR_OBJ:
+def _rebuild_xarray(df: pd.DataFrame, original: XR_OBJ, coords: List[str],
+                    bin_centers: dict) -> XR_OBJ:
     # Extract bin index columns
     bin_cols = [f"_bin_{dim}" for dim in coords]
 
@@ -343,8 +350,10 @@ def _rebuild_xarray(df: pd.DataFrame, original: XR_OBJ, coords: List[str]
         if col not in coords + bin_cols + other_coords
     ]
 
-    # Coordinate axis values from bin centers
-    coord_values = {dim: np.sort(df[dim].unique()) for dim in coords}
+    coord_values = {
+        dim: np.asarray(bin_centers[dim])
+        for dim in coords
+    }
     shape = tuple(len(coord_values[dim]) for dim in coords)
     dims = tuple(coords)
 

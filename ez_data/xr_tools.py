@@ -1,5 +1,6 @@
 """Accessors to utilities for xarray objects"""
 
+from .fitting import curve_fit, curve_fit_peaks, fit_peaks
 from .utils import (align_dims, apply_transform, apply_linear_transform, 
                     bin_to_grid, smart_sel)
 
@@ -38,7 +39,7 @@ class ezDatasetAccessor():
         return apply_linear_transform(self._obj, matrix, input_cols, 
                                       output_cols, xr_output_type)
     
-    def gridded(self, reduce: str | Callable, **bins) -> xr.Dataset:
+    def gridded(self, reduce: str | Callable = 'mean', **bins) -> xr.Dataset:
         """Accessor to bin_to_grid"""
         return bin_to_grid(self._obj, reduce, **bins)
 
@@ -58,3 +59,31 @@ class ezDataArrayAccessor():
     def gridded(self, reduce: str | Callable = 'mean', **bins) -> xr.DataArray:
         """Accessor to bin_to_grid"""
         return bin_to_grid(self._obj, reduce, **bins)
+    
+    def fit_peaks(self, x: str, y: str, dim: str = None,
+                  peak_model: str = "gaussian",
+                  min_peak_height: float = None,
+                  background: str = 'linear',
+                  initial_guesses: dict | Callable = None,
+                  min_valid_points: int = 4,
+                  guess_from_mask: bool = True) -> xr.Dataset:
+        """Accessor to fit_peaks"""
+        return fit_peaks(self._obj, x, y, dim, peak_model, 
+                         min_peak_height, background, initial_guesses, 
+                         min_valid_points, guess_from_mask)
+    
+    def curve_fit(self, x: str, yerr: xr.DataArray = None, 
+                  curve_model: str | Callable = 'line', 
+                  initial_guesses: dict = None, **kwargs) -> xr.Dataset:
+        """Accessor to curve_fit"""
+        return curve_fit(self._obj[x], self._obj, curve_model, initial_guesses, 
+                         **kwargs)
+
+    def curve_fit_peaks(self, x: str, y: str, 
+                        param: str = 'peak_center',
+                        curve_model: str | Callable = 'line',
+                        curve_fit_kwargs: dict = {},
+                        **fit_peaks_kwargs) -> xr.Dataset:
+        """Accessor to curve_fit_peaks"""
+        return curve_fit_peaks(self._obj, x, y, param, curve_model, 
+                               curve_fit_kwargs, **fit_peaks_kwargs)
