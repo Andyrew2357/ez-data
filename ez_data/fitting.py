@@ -170,13 +170,14 @@ def _make_initial_guesses(model: lmfit.Model,
     if guess_from_mask:
         peak_x = xvals[np.nanargmax(yvals)]
         amplitude = np.nanmax(yvals) - np.nanmin(yvals)
-        sigma = (xvals.max() - xvals.min()) / 10,
-        min_x = xvals.min()
-        max_x = xvals.max()
+        sigma = (xvals.max() - xvals.min()) / 10
+        # min_x = xvals.min()
+        # max_x = xvals.max()
 
         # Set peak parameters safely
         if 'peak_center' in params:
-            params['peak_center'].set(value = peak_x, min = min_x, max = max_x)
+            # params['peak_center'].set(value = peak_x, min = min_x, max = max_x)
+            params['peak_center'].set(value = peak_x)
         if 'peak_amplitude' in params:
             params['peak_amplitude'].set(value = amplitude, min = 0)
         if 'peak_sigma' in params:
