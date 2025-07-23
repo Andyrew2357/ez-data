@@ -76,7 +76,7 @@ def errorplot(x: DARR, y: DARR,
               xerr: DARR = None, yerr: DARR = None, 
               errstyle: str = 'bar', 
               ax: Axes = None, 
-              ekwargs: dict = {}, 
+              ekwargs: dict = None, 
               **kwargs) -> ErrorbarContainer | SHADE_EPLOT:
     """
     Make a plot with errors. The errorstyle can either be 'bar' or 'shade'.
@@ -84,6 +84,7 @@ def errorplot(x: DARR, y: DARR,
     region surrounding a line
     """
     
+    ekwargs = ekwargs or {}
     chart = ax or plt
     make_algebraic(x)
     make_algebraic(y)
@@ -95,9 +96,9 @@ def errorplot(x: DARR, y: DARR,
     elif errstyle == 'shade':
         lines = chart.plot(x, y, **kwargs)
         if not 'alpha' in ekwargs:
-            ekwargs['alpha'] = 0.5 * (lines[0].get_alpha() or 1.0)
-        if not 'color' in ekwargs:
-            ekwargs['color'] = lines[0].get_color()
+            ekwargs['alpha'] = 0.5 * (lines[-1].get_alpha() or 1.0)
+        curve_color = lines[-1].get_color()
+        ekwargs.setdefault('color', curve_color)
 
         result = [lines]
         if xerr is not None:
@@ -133,7 +134,7 @@ def waterfall(x: DARR, y: DARR, z: DARR,
     make_algebraic(z)
 
     if isinstance(cmap, str):
-        cmap = plt.cm.get_cmap(cmap)
+        cmap = plt.get_cmap(cmap)
 
     if norm is None:
         vmin = vmin or float(z.min())
@@ -207,7 +208,7 @@ class ezpltDatasetAccessor():
                   xerr: str | DARR = None, yerr: str | DARR = None,
                   errstyle: str = 'bar', 
                   ax: Axes = None, 
-                  ekwargs: dict = {}, **kwargs
+                  ekwargs: dict = None, **kwargs
                   ) -> ErrorbarContainer | SHADE_EPLOT:
         """Accessor to errorplot"""
         
@@ -255,7 +256,7 @@ class ezpltDataArrayAccessor():
                   xerr: str | DARR = None, yerr: str | DARR = None,
                   errstyle: str = 'bar', 
                   ax: Axes = None, 
-                  ekwargs: dict = {}, **kwargs
+                  ekwargs: dict = None, **kwargs
                   ) -> ErrorbarContainer | SHADE_EPLOT:
         """Accessor to errorplot"""
         

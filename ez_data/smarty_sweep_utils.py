@@ -48,12 +48,14 @@ def dat_to_pandas(folder: str, suffix: str | List[str] = None,
     return D
 
 def pandas_to_xarray(df: pd.DataFrame, coord_attr: dict, data_attr: dict, 
-                     global_attr: dict = {}, ignored_attr: List[str] = []
+                     global_attr: dict = None, ignored_attr: List[str] = None
                      ) -> xr.Dataset:
     """
     Convert pandas DataFrame and applicable metadata into an xarray Dataset
     """
 
+    global_attr = global_attr or {}
+    ignored_attr = ignored_attr or []
     idx_cols = [col for col in df.columns if col not in coord_attr and \
                 col not in data_attr and col not in ignored_attr]
     max_indices = {col: int(df[col].max()) for col in idx_cols}

@@ -76,13 +76,13 @@ class ezDataArrayAccessor():
                   curve_model: str | Callable = 'line', 
                   initial_guesses: dict = None, **kwargs) -> xr.Dataset:
         """Accessor to curve_fit"""
-        return curve_fit(self._obj[x], self._obj, curve_model, initial_guesses, 
-                         **kwargs)
+        return curve_fit(self._obj[x], self._obj, yerr, curve_model, 
+                         initial_guesses, **kwargs)
 
     def curve_fit_peaks(self, x: str, y: str, 
                         param: str = 'peak_center',
                         curve_model: str | Callable = 'line',
-                        curve_fit_kwargs: dict = {},
+                        curve_fit_kwargs: dict = None,
                         **fit_peaks_kwargs) -> xr.Dataset:
         """Accessor to curve_fit_peaks"""
         return curve_fit_peaks(self._obj, x, y, param, curve_model, 

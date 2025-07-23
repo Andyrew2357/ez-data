@@ -23,7 +23,7 @@ def fit_peaks(da: xr.DataArray,
               initial_guesses: dict | Callable = None,
               min_valid_points: int = 4,
               guess_from_mask: bool = True,
-              fit_kwargs: dict = {}) -> xr.Dataset:
+              fit_kwargs: dict = None) -> xr.Dataset:
     """
     Fit a 1D model (peak + background) to each slice along `dim` in a 
     2D DataArray.
@@ -56,6 +56,7 @@ def fit_peaks(da: xr.DataArray,
         Passed to model.fit
     """
 
+    fit_kwargs = fit_kwargs or {}
     dim = dim or da[y].dims[0]
     model = _get_peak_model(peak_model, background)
     results = []
@@ -103,6 +104,10 @@ def fit_peaks(da: xr.DataArray,
                 param = result.params[name]
                 if name == 'peak_center':
                     param.value = x_mean + x_std * param.value
+                    if param.stderr is not None:
+                        param.stderr *= x_std
+                elif name == 'peak_sigma':
+                    param.value *= x_std
                     if param.stderr is not None:
                         param.stderr *= x_std
                 elif name == 'peak_amplitude':
@@ -165,11 +170,13 @@ def _make_initial_guesses(model: lmfit.Model,
     if guess_from_mask:
         peak_x = xvals[np.nanargmax(yvals)]
         amplitude = np.nanmax(yvals) - np.nanmin(yvals)
-        sigma = (xvals.max() - xvals.min()) / 10
+        sigma = (xvals.max() - xvals.min()) / 10,
+        min_x = xvals.min()
+        max_x = xvals.max()
 
         # Set peak parameters safely
         if 'peak_center' in params:
-            params['peak_center'].set(value = peak_x)
+            params['peak_center'].set(value = peak_x, min = min_x, max = max_x)
         if 'peak_amplitude' in params:
             params['peak_amplitude'].set(value = amplitude, min = 0)
         if 'peak_sigma' in params:
@@ -309,7 +316,7 @@ def curve_fit_peaks(da: xr.DataArray,
                     y: str,
                     param: str = 'peak_center',
                     curve_model: str | Callable = 'line',
-                    curve_fit_kwargs: dict = {},
+                    curve_fit_kwargs: dict = None,
                     **fit_peaks_kwargs) -> xr.Dataset:
     """
     Fit peaks across one axis, then fit a curve to one of the parameters.
@@ -333,6 +340,7 @@ def curve_fit_peaks(da: xr.DataArray,
     -------
     Dataset with peak fit parameters + curve fit parameters.
     """
+    curve_fit_kwargs = curve_fit_kwargs or {}
     peak_ds = fit_peaks(da, x = x, y = y, **fit_peaks_kwargs)
 
     # Get valid peak parameter points
