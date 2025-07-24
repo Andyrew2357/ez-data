@@ -2,7 +2,8 @@
 
 from .fitting import curve_fit, curve_fit_peaks, fit_peaks
 from .utils import (align_dims, apply_transform, apply_linear_transform, 
-                    bin_to_grid, smart_sel)
+                    bin_to_grid, parallelepiped_mask, smart_sel, 
+                    where_parallelepiped)
 
 import numpy as np
 import xarray as xr
@@ -42,6 +43,16 @@ class ezDatasetAccessor():
     def gridded(self, reduce: str | Callable = 'mean', **bins) -> xr.Dataset:
         """Accessor to bin_to_grid"""
         return bin_to_grid(self._obj, reduce, **bins)
+    
+    def where_parallelepiped(self, origin: dict[str, float], 
+                             *verts: Tuple[List[float]]) -> xr.Dataset:
+        """Accessor to where_parallelepiped"""
+        return where_parallelepiped(self._obj, origin, *verts)
+    
+    def parallelepiped_mask(self, origin: dict[str, float], 
+                            *verts: Tuple[List[float]]) -> xr.DataArray:
+        """Accessor to parallelepiped_mask"""
+        return parallelepiped_mask(self._obj, origin, *verts)
 
 @xr.register_dataarray_accessor("ez")
 class ezDataArrayAccessor():
@@ -87,3 +98,13 @@ class ezDataArrayAccessor():
         """Accessor to curve_fit_peaks"""
         return curve_fit_peaks(self._obj, x, y, param, curve_model, 
                                curve_fit_kwargs, **fit_peaks_kwargs)
+
+    def where_parallelepiped(self, origin: dict[str, float], 
+                             *verts: Tuple[List[float]]) -> xr.DataArray:
+        """Accessor to where_parallelepiped"""
+        return where_parallelepiped(self._obj, origin, *verts)
+
+    def parallelepiped_mask(self, origin: dict[str, float], 
+                            *verts: Tuple[List[float]]) -> xr.DataArray:
+        """Accessor to parallelepiped_mask"""
+        return parallelepiped_mask(self._obj, origin, *verts)

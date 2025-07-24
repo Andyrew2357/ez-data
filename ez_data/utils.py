@@ -410,3 +410,54 @@ def _rebuild_xarray(df: pd.DataFrame, original: XR_OBJ, coords: List[str],
             if coord in original.coords:
                 da.coords[coord].attrs = original.coords[coord].attrs.copy()
         return da
+    
+def where_parallelepiped(obj: XR_OBJ, origin: dict[str, float], 
+                         *verts: Tuple[List[float]]) -> XR_OBJ:
+    return obj.where(parallelepiped_mask(obj, origin, *verts))
+
+def parallelepiped_mask(obj: XR_OBJ | pd.DataFrame, 
+                        origin: dict[str, float], 
+                        *verts: Tuple[List[float]]
+                        ) -> xr.DataArray | pd.DataFrame:
+    
+    basis = np.array(list(origin.keys()))
+    N = len(basis) # dimension of the relevant superspace
+    n = len(verts) # dimension of the parallelepiped
+    if n == 0:
+        raise ValueError("parallelepiped_mask requires at least one vertex.")
+    if n > N:
+        raise ValueError(
+            "The dimension of a parallelepiped cannot exceed "
+            "the dimension of its superspace."
+        )
+
+    vertices = np.array(verts, dtype = float).T
+    N_, n = vertices.shape
+    if N != N_:
+        raise ValueError(
+            f"Dimensions of the vertices ({N_}) do not match the origin ({N})."
+        )
+    v0 = np.array(list(origin.values()), dtype = float)
+    vertices -= v0.reshape(-1, 1) # translate to 0
+
+    # dx_j = dv_ij * c_i with c_i in [0, 1] --> (dv^-1)_ij * dx_j in [0, 1]
+    # Here I have used dv^-1 to denote a left inverse of dv, because dv is
+    # generally not square.
+    # This left inverse is calculated using least-squares formulas.
+    # This will fail if dv are not linearly independent for obvious reasons, so
+    # we check the rank of the matrix and return an all false mask if needed
+    if np.linalg.matrix_rank(vertices) < n:
+        return xr.full_like(obj, False, dtype = bool)    
+    ATA = vertices.T @ vertices
+    coeffs = np.linalg.inv(ATA) @ vertices.T # left inverse 
+    # (gives us the relevant coefficients for constructing inequalities)
+
+    def mask_from_coefficients(coeff):
+        expression = sum([coeff[i]*(obj[basis[i]] - v0[i]) for i in range(N)])
+        return (0 <= expression) & (expression <= 1)
+
+    mask = mask_from_coefficients(coeffs[0, :])
+    for r in range(1, n):
+        mask &= mask_from_coefficients(coeffs[r, :])
+
+    return mask
