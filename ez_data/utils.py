@@ -438,6 +438,22 @@ def parallelepiped_mask(obj: XR_OBJ | pd.DataFrame,
             f"Dimensions of the vertices ({N_}) do not match the origin ({N})."
         )
     v0 = np.array(list(origin.values()), dtype = float)
+
+    # Automatic normalization (Otherwise things are numerically ill-conditioned)
+    # Scale each axis by (max(|origin|, |vertices|) or 1)
+    scale = np.ones(N, dtype=float)
+    for i, k in enumerate(basis):
+        coord_values = obj[k].values if k in obj.coords else np.array([v0[i]])
+        max_val = max(
+            np.nanmax(np.abs(coord_values)),
+            np.nanmax(np.abs(vertices[i])),
+            abs(v0[i])
+        )
+        scale[i] = max_val if max_val != 0 else 1.0
+    
+    v0 /= scale
+    vertices /= scale[:, None]
+
     vertices -= v0.reshape(-1, 1) # translate to 0
 
     # dx_j = dv_ij * c_i with c_i in [0, 1] --> (dv^-1)_ij * dx_j in [0, 1]
@@ -453,7 +469,8 @@ def parallelepiped_mask(obj: XR_OBJ | pd.DataFrame,
     # (gives us the relevant coefficients for constructing inequalities)
 
     def mask_from_coefficients(coeff):
-        expression = sum([coeff[i]*(obj[basis[i]] - v0[i]) for i in range(N)])
+        expression = sum([coeff[i]*(obj[basis[i]] / scale[i] - v0[i]) 
+                          for i in range(N)])
         return (0 <= expression) & (expression <= 1)
 
     mask = mask_from_coefficients(coeffs[0, :])
