@@ -89,7 +89,7 @@ class GappedState():
         )
         self._Y = state[self.k_y].values
 
-    def plot_masks(self, cmap: str | colors.Colormap = 'RdBu', norm = None, 
+    def plot_masks(self, cmap: str | colors.Colormap = 'coolwarm', norm = None, 
                    band_color: Tuple[float, float, float] = None, ax = None,
                    **kwargs):
         band_color = band_color or (1, 0, 0)
