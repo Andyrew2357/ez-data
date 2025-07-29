@@ -67,7 +67,8 @@ class GappedState():
     def _get_band(self, drop: bool = False) -> xr.Dataset:
         return self.ds.where(self._get_band_mask(), drop = drop)
 
-    def calc_gap(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    def calc_gap(self, neg_to_nan: bool = False
+                 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         state = self._get_state(drop = True).transpose(self.k_y, self.k_x)
         band = self._get_band(drop = True).transpose(self.k_y, self.k_x)
         self._mu, self._mu_unc = mu(
@@ -85,7 +86,8 @@ class GappedState():
             gamma = self.gamma,
             var_gamma = self.var_gamma,
             omega = 2* np.pi * self.f,
-            mask_nans = True
+            mask_nans = True,
+            neg_to_nan = neg_to_nan
         )
         self._Y = state[self.k_y].values
 
