@@ -1,346 +1,295 @@
+import json
+import sqlite3
+import numpy as np
 import pandas as pd
 import xarray as xr
-import numpy as np
-import pickle
-import json
-import time
 from pathlib import Path
 from typing import Any, Dict, List
 
-import sqlite3
-import h5py
+def _to_builtin(obj):
+    if isinstance(obj, (list, tuple)):
+        return [_to_builtin(x) for x in obj]
+    if isinstance(obj, dict):
+        return {k: _to_builtin(v) for k, v in obj.items()}
+    if hasattr(obj, "item"):  # catches numpy scalars
+        return obj.item()
+    return obj
 
-class DsetConnector:
+class DsetConnector():
     """
-    Efficient writing/ reading for structured experimental data using pandas 
-    backend.
-
-    This class maintains sampling structure through index coordinates while
-    efficiently storing data incrementally. Converts to xarray for analysis.
+    Lightweight connector for streaming experimental data into SQLite
+    Designed for use with ParamSweepMeasure.
     """
 
-    def __init__(self, path: str | Path,            # path to save/load dataset
-                 storage_backend: str = 'sqlite',   # 'hdf5' or 'sqlite'
-                 flush_interval: float = 30.0,      # seconds
-                 flush_batch_size: int = 500,       # max points before flushing
-                 index_names: List[str] = None):
-        
-        self.path = Path(path)
-        self.storage_backend = storage_backend
-        self.flush_interval = flush_interval
-        self.flush_batch_size = flush_batch_size
-        self.index_names = index_names
+    def __init__(
+        self, 
+        path       : str | Path,
+        dims       : List[str] = None,
+        shape      : List[int] = None,
+        coord_names: List[str] = None,
+        data_names : List[str] = None,
+        timestamp  : bool      = None,
+        use_buffer : bool      = False,
+        buffer_size: int       = 100
+    ):
 
-        # In-memory buffer as lists of dicts
-        self.buffer = []
-        self.last_flush_time = time.time()
+        self.path = Path(path).with_suffix(".db")
+        self.use_buffer = use_buffer
+        self.buffer_size = buffer_size
+        self.buffer: List[tuple] = []
 
-        # Metadata storage
-        self.variable_attrs = {}
-        self.global_attrs = {}
-        self.nind = None
-        self.max_indices = {}
-        self.coord_vars = None
+        self.conn = sqlite3.connect(self.path)
+        self.cur = self.conn.cursor()
 
-        # Set up storage path with appropriate extension
-        extensions = {'hdf5': '.h5', 'sqlite': '.db'}
-        if not self.path.suffix:
-            self.path = self.path.with_suffix(extensions[self.storage_backend])
+        # safe optimizations for this use case
+        self.cur.execute("PRAGMA journal_mode=WAL")
+        self.cur.execute("PRAGMA synchronous=OFF")
+        self.cur.execute("PRAGMA temp_store=MEMORY")
 
-    def add_variable_attrs(self, attrs: Dict[str, Any]):
-        """Set attributes for variables."""
+        if self._has_tables():
+            # Existing file -> load schema info
+            schema = self._load_schema()
+            self.dims = dims or schema['dims']
+            self.shape = shape or schema.get('shape')
+            self.coord_names = coord_names or schema['coord_names']
+            self.data_names = data_names or schema['data_names']
+            self.timestamp = timestamp or schema.get('timestamp')
 
-        self.variable_attrs.update(**attrs)
-
-    def add_global_attrs(self, attrs: Dict[str, Any]):
-        """Set attributes for dataset."""
-
-        self.global_attrs.update(**attrs)
-
-    def add_point(self, indices: List[int], coords: Dict[str, Any], 
-                  data: Dict[str, Any]):
-        """Add a new point to the dataset."""
-
-        if not self.nind:
-            self.nind = len(indices)
-
-        if len(indices) != self.nind:
-            raise RuntimeError(
-                "Provided data indices are insonsistent with previous data."
-            )
-        
-        # Update max indices
-        if self.index_names:
-            indices = {self.index_names[i]: indices[i]
-                       for i in range(len(indices))}
         else:
-            indices = {f'dim{i}': indices[i] for i in range(len(indices))}
+            # New file -> need full schema
+            if dims is None or coord_names is None or data_names is None:
+                raise ValueError(
+                    "dims, coord_names, and data_names required for new database."
+                )
+            
+            self.dims = dims
+            self.shape = shape
+            self.coord_names = coord_names
+            self.data_names = data_names
+            self.timestamp = timestamp
 
-        for dim, idx in indices.items():
-            if dim in self.max_indices:
-                self.max_indices[dim] = max(self.max_indices[dim], idx)
-            else:
-                self.max_indices[dim] = idx
+            self._init_tables()
+            self._store_schema()
 
-        # Fill in coord_vars
-        if not self.coord_vars:
-            self.coord_vars = list(coords.keys())
-        
-        # Create the data point
-        point = {**indices, **coords, **data}
-        self.buffer.append(point)
-        self._maybe_flush()
+        self._insert_sql = self._make_insert_sql()        
 
-    def _maybe_flush(self):
-        """Flush the buffer if it's getting large or enough time has passed"""
+    def _has_tables(self) -> bool:
+        self.cur.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        return bool(self.cur.fetchall())
+    
+    def _init_tables(self):
+        cols = [f"{dim} INT" for dim in self.dims]
+        cols += [f"{n} REAL" for n in (self.coord_names + self.data_names)]
+        if self.timestamp:
+            cols.append("timestamp REAL")
 
-        now = time.time()
-        if len(self.buffer) >= self.flush_batch_size or \
-            (now - self.last_flush_time) > self.flush_interval:
-            self.flush()
+        self.cur.execute(
+            f"CREATE TABLE IF NOT EXISTS sweep"
+            f"(id INTEGER PRIMARY KEY AUTOINCREMENT, {', '.join(cols)})"
+        )
+        self.cur.execute(
+            "CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT)"
+        )
+        self.cur.execute(
+            """CREATE TABLE IF NOT EXISTS var_metadata (
+                var_name TEXT,
+                key TEXT,
+                value TEXT,
+                PRIMARY KEY (var_name, key)
+            )"""
+        )
+        self.conn.commit()
+
+    def _store_schema(self):
+        schema = {
+            'dims'       : self.dims,
+            'shape'      : self.shape,
+            'coord_names': self.coord_names,
+            'data_names' : self.data_names,
+            'timestamp'  : self.timestamp,
+            'version'    : 1.0,
+        }
+        self.cur.execute(
+            "INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)",
+            ("__schema__", json.dumps(_to_builtin(schema)))
+        )
+        self.conn.commit()
+
+    def _load_schema(self) -> dict:
+        self.cur.execute("SELECT value FROM metadata WHERE key='__schema__'")
+        row = self.cur.fetchone()
+        if not row:
+            raise RuntimeError("Existing database has no schema metadata")
+        return json.loads(row[0])
+    
+    def _make_insert_sql(self) -> str:
+        cols = self.dims + self.coord_names + self.data_names
+        if self.timestamp:
+            cols.append('timestamp')
+        placeholders = ','.join(['?'] * len(cols))
+        return f"INSERT INTO sweep ({','.join(cols)}) VALUES ({placeholders})"
+    
+    @classmethod
+    def from_param_sweep(
+        cls,
+        sweep,
+        path: str | Path,
+        use_buffer  : bool = False,
+        buffer_size : int  = 100
+    ):
+        dims = [f"dim{i}" for i in range(sweep.dim)]
+        shape = list(sweep.dimensions)
+        connector = cls(
+            path,
+            dims        = dims,
+            shape       = shape,
+            coord_names = sweep.coord_name,
+            data_names  = sweep.data_name,
+            timestamp   = sweep.timestamp,
+            use_buffer  = use_buffer,
+            buffer_size = buffer_size,
+        )
+
+        # add sweep metadata
+        connector.add_global_attrs({
+            'time_per_point': getattr(sweep, 'time_per_point', None),
+        })
+
+        # also populate variable-specific metadata
+        for coord in getattr(sweep, 'coordinates', []):
+            connector.add_variable_attrs(coord['name'], {
+                'long_name': coord.get('long_name'),
+                'units': coord.get('units'),
+            })
+        for meas in getattr(sweep, 'measurements', []):
+            connector.add_variable_attrs(meas['name'], {
+                'long_name': meas.get('long_name'),
+                'units': meas.get('units'),
+                'lazy_measurement': meas.get('lazy', False),
+            })
+
+        return connector
+    
+    def add_point(
+        self, 
+        idx      : List[int], 
+        coords   : List[float], 
+        data     : List[float], 
+        timestamp: float | None
+    ):
+        row = tuple(idx) + tuple(coords) + tuple(data)
+        if self.timestamp:
+            row += (timestamp,)
+
+        if self.use_buffer:
+            self.buffer.append(row)
+            if len(self.buffer) >= self.buffer_size:
+                self.flush()
+
+        else:
+            self.cur.execute(self._insert_sql, row)
+            self.conn.commit()
 
     def flush(self):
-        """Write buffer to storage."""
-        
-        if not self.buffer:
-            return
-        
-        # Convert buffer to DataFrame
-        df = pd.DataFrame(self.buffer)
-        
-        # Write to storage
-        match self.storage_backend:
-            case 'hdf5':
-                self._flush_hdf5(df)
-            case 'sqlite':
-                self._flush_sqlite(df)
-            case _:
-                raise RuntimeError("Unsupported backend.")
-            
-        # Clear buffer and update timestamp
-        self.buffer = []
-        self.last_flush_time = time.time()
+        if self.buffer:
+            self.cur.executemany(self._insert_sql, self.buffer)
+            self.conn.commit()
+            self.buffer.clear()
 
-    def _flush_hdf5(self, df: pd.DataFrame):
-        """Flush to HDF5 format."""
-        
-        mode = 'a' if self.path.exists() else 'w'
-        df.to_hdf(str(self.path), key = 'data', mode = mode, 
-                  append = (mode == 'a'), format = 'table', 
-                  complib = 'blosc', complevel = 9)
-        
-    def _flush_sqlite(self, df: pd.DataFrame):
-        """Flush to SQLite format."""
+    def add_global_attrs(self, attrs: Dict[str, Any]):
+        for k, v in attrs.items():
+            self.cur.execute(
+                "INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)",
+                (k, str(v)),
+            )
+        self.conn.commit()
 
-        conn = sqlite3.connect(str(self.path))
-        df.to_sql('data', conn, if_exists = 'append', index = False)
-        conn.commit()
-        conn.close()
+    def add_variable_attrs(self, var: str, attrs: Dict[str, Any]):
+        if var not in (self.coord_names + self.data_names + \
+                       (['timestamp'] if self.timestamp else [])):
+            raise ValueError(f"Unknown variable {var}")
+        for k, v in attrs.items():
+            self.cur.execute(
+                "INSERT OR REPLACE INTO var_metadata (var_name, key, value) VALUES (?, ?, ?)",
+                (var, k, json.dumps(_to_builtin(v))),
+            )
+        self.conn.commit()
 
-    def write_metadata(self):
-        """Write metadata to storage."""
-
-        match self.storage_backend:
-            case 'hdf5':
-                self._write_metadata_hdf5()
-            case 'sqlite':
-                self._write_metadata_sqlite()
-            case _:
-                raise RuntimeError("Unsupported backend.")
-            
-    def _write_metadata_hdf5(self):
-        """Write metadata to hdf5."""
-
-        mode = 'a' if self.path.exists() else 'w'
-        with h5py.File(self.path, mode) as f:
-            f.attrs['variable_attrs'] = json.dumps(self.variable_attrs)
-            f.attrs['global_attrs']   = json.dumps(self.global_attrs)
-            f.attrs['max_indices']    = json.dumps(self.max_indices)
-            f.attrs['coord_vars']     = json.dumps(self.coord_vars)
-
-    def _write_metadata_sqlite(self):
-        """Write the metadata to SQLite."""
-
-        conn = sqlite3.connect(str(self.path))
-        metadata = {
-            'variable_attrs': self.variable_attrs,
-            'global_attrs': self.global_attrs,
-            'max_indices'   : self.max_indices,
-            'coord_vars'    : self.coord_vars
-        }
-        conn.execute(
-            'CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value BLOB)'
-        )
-        conn.execute(
-            'INSERT OR REPLACE INTO metadata VALUES (?, ?)',
-            ('config', sqlite3.Binary(pickle.dumps(metadata)))
-        )
-        conn.commit()
-        conn.close()
-
-    def load_dataframe(self) -> pd.DataFrame:
-        """Load the complete dataset as a pandas DataFrame."""
-
-        # Flush any remaining buffer data
+    def close(self):
         self.flush()
+        self.conn.close()
 
-        if not self.path.exists():
-            return pd.DataFrame()
-        
-        match self.storage_backend:
-            case 'hdf5':
-                return self._load_hdf5()
-            case 'sqlite':
-                return self._load_sqlite()
-            case _:
-                raise RuntimeError("Unsupported backend.")
-            
-    def _load_hdf5(self):
-        """Load from HDF5."""
+def sqlite_to_xarray(path: str | Path, duplicate_mode: str = 'stack') -> xr.Dataset:
+    """
+    Load a sweep stored in SQLite into an xarray.Dataset
+    """
 
-        df = pd.read_hdf(str(self.path), key = 'data')
+    path = Path(path).with_suffix(".db")
+    conn = sqlite3.connect(path)
 
-        # Load metadata
-        with h5py.File(self.path, 'r') as f:
-            self.variable_attrs = json.loads(
-                f.attrs.get('variable_attrs', "{}")
-            )
-            self.global_attrs = json.loads(
-                f.attrs.get('global_attrs', "{}")
-            )
-            self.max_indices = json.loads(
-                f.attrs.get('max_indices', "{}")
-            )
-            self.coord_vars = json.loads(
-                f.attrs.get('coord_vars', "[]")
-            )
+    try:
+        cur = conn.cursor()
 
-        return df
-    
-    def _load_sqlite(self) -> pd.DataFrame:
-        """Load from SQLite."""
+        # load schema
+        cur.execute("SELECT value FROM metadata WHERE key = '__schema__'")
+        schema = json.loads(cur.fetchone()[0])
 
-        conn = sqlite3.connect(str(self.path))
-        df = pd.read_sql_query('SELECT * FROM data', conn)
+        dims = schema['dims']
 
-        try:
-            cursor = conn.execute('SELECT value FROM metadata WHERE key = ?',
-                                  ('config',))
-            row = cursor.fetchone()
-            if row:
+        # load sweep data
+        df = pd.read_sql("SELECT * FROM sweep", conn)
+
+        # drop id column if present
+        if 'id' in df.columns:
+            df = df.drop(columns = 'id')
+
+        # handle duplicates
+        if duplicate_mode in ('mean', 'max', 'min', 'median'):
+            numeric_cols = df.select_dtypes(include = np.number).columns.to_list()
+            agg_funcs = {col: duplicate_mode for col in numeric_cols}
+            if 'timestamp' in df.columns:
+                agg_funcs['timestamp'] = 'last'
+            df = df.groupby(dims).agg(agg_funcs)
+
+        elif duplicate_mode == 'stack':
+            df = df.copy()
+            df['repeat'] = df.groupby(dims).cumcount()
+            df = df.set_index(dims + ['repeat'])
+            dims += ['repeat']
+
+        else:
+            df.set_index(dims)
+
+        ds = df.to_xarray().transpose(*dims)
+
+        # Ensure dims are plain integer coordinates, not binary junk
+        for dim, n in zip(dims, schema["shape"]):
+            ds = ds.assign_coords({dim: np.arange(n)})
+
+        # attach metadata
+        cur.execute("SELECT key, value FROM metadata")
+        for key, value in cur.fetchall():
+            if key == "__schema__":
+                continue
+            try:
+                ds.attrs[key] = json.loads(value)
+            except Exception:
+                ds.attrs[key] = value
+
+        cur.execute("SELECT var_name, key, value FROM var_metadata")
+        for var, key, value in cur.fetchall():
+            if var in ds:
                 try:
-                    metadata = pickle.loads(row[0])
-                    self.variable_attrs = metadata.get('variable_attrs', {})
-                    self.global_attrs = metadata.get('global_attrs', {})
-                    self.max_indices = metadata.get('max_indices', {})
-                    self.coord_vars = metadata.get('coord_vars', [])
-                except Exception as e:
-                    raise RuntimeError("Pickle load error:", e)
-        
-        except sqlite3.OperationalError as e:
-            raise RuntimeError("OperationalError:", e)
-        
-        conn.close()
-        return df
-    
-    def to_xarray(self, variables: List[str]= None) -> xr.Dataset:
-        """
-        Convert to xarray Dataset with proper structure.     
-        Returns a dataset where data is arranged according to the indices.
-        (These form the 'logical coordinates', wheras coords form the 
-        'physical coordinates')
-        """
-        
-        df = self.load_dataframe()
-        if df.empty:
-            return xr.Dataset()
-
-        if not variables:
-            variables = [col for col in df.columns 
-                         if col not in self.max_indices]
-        coord_v = self.coord_vars or []
-        data_v = [var for var in variables if var not in coord_v]
-        idx_cols = list(self.max_indices.keys())
-        shape = tuple(self.max_indices[dim] + 1 for dim in idx_cols)
-        dims = tuple(idx_cols)
-
-        # Compute flattened index for vectorized assignment
-        multi_idx = tuple(df[dim].astype(int).values for dim in idx_cols)
-        flat_idx = np.ravel_multi_index(multi_idx, shape)
-
-        def is_datetime_column(series: pd.Series) -> bool:
-            dtype = series.dtype
-            if pd.api.types.is_datetime64_any_dtype(dtype):
-                return True
-            if pd.api.types.is_object_dtype(dtype) or \
-                pd.api.types.is_string_dtype(dtype):
-                sample = series.dropna().astype(str).head(5)
-                try:
-                    pd.to_datetime(sample, errors='raise')
-                    return True
+                    ds[var].attrs[key] = json.loads(value)
                 except Exception:
-                    return False
-            return False
+                    ds[var].attrs[key] = value
 
-        def fill_array(series: pd.Series, is_time: bool):
-            values = series.copy()
-            if is_time:
-                values = pd.to_datetime(values).astype("datetime64[ns]")
-                arr = np.full(np.prod(shape), np.datetime64("NaT"), 
-                              dtype="datetime64[ns]")
-            else:
-                values = values.astype(float)
-                arr = np.full(np.prod(shape), np.nan, dtype=float)
-            arr[flat_idx] = values
-            return arr.reshape(shape)
+        # promote physical coordinates to coords
+        for cname in schema["coord_names"]:
+            if cname in ds:
+                ds = ds.set_coords(cname)
 
-        data_vars = {}
-        for name in data_v:
-            if name not in df.columns:
-                continue
-            is_time = is_datetime_column(df[name])
-            arr = fill_array(df[name], is_time)
-            attrs = self.variable_attrs.get(name, {})
-            data_vars[name] = (dims, arr, attrs)
+    finally:
+        conn.close()
 
-        coord_vars = {}
-        for name in coord_v:
-            if name not in df.columns:
-                continue
-            is_time = is_datetime_column(df[name])
-            arr = fill_array(df[name], is_time)
-            attrs = self.variable_attrs.get(name, {})
-            coord_vars[name] = (dims, arr, attrs)
-
-        return xr.Dataset(coords=coord_vars, data_vars=data_vars, 
-                          attrs=self.global_attrs)
-
-    def get_flat_data(self) -> pd.DataFrame:
-        """Get the data in flat format."""
-        return self.load_dataframe()
-
-    def get_summary(self) -> Dict[str, Any]:
-        """Get summary statistics about the dataset."""
-        df = self.load_dataframe()
-        
-        if df.empty:
-            return {"empty": True}
-        
-        summary = {
-            "shape"         : tuple(self.max_indices[dim] + 1 for dim \
-                                in self.max_indices.keys()),
-            "total_points"  : len(df),
-            "index_dims"    : self.max_indices.keys(),
-            "variables"     : [col for col in df.columns \
-                                if col not in self.max_indices],
-            "storage_backend": self.storage_backend,
-            "file_size_mb"  : self.path.stat().st_size / (1024*1024) \
-                                if self.path.exists() else 0
-        }
-
-        # Fill percentage (how much of the theoretical grid is filled)
-        theoretical_points = np.prod([self.max_indices[dim] + 1 for dim \
-                                      in self.max_indices.keys()])
-        summary["fill_percentage"] = (len(df)/ theoretical_points) * 100
-
-        return summary
+    return ds

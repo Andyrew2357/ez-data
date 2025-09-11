@@ -4,15 +4,20 @@ from .fitting import curve_fit, curve_fit_peaks, fit_peaks
 from .utils import (align_dims, apply_transform, apply_linear_transform, 
                     bin_to_grid, parallelepiped_mask, smart_sel, 
                     where_parallelepiped)
-
+from .dataset_connector import sqlite_to_xarray
 import numpy as np
 import xarray as xr
+from pathlib import Path
 from typing import Callable, List, Tuple
 
 @xr.register_dataset_accessor("ez")
 class ezDatasetAccessor():
     def __init__(self, xr_obj: xr.Dataset):
         self._obj = xr_obj
+
+    def from_sqlite(path: str | Path, duplicate_mode: str = 'stack') -> xr.Dataset:
+        """Accessor for dataset_connector.sqlite_to_xarray"""
+        return sqlite_to_xarray(path, duplicate_mode = duplicate_mode)
 
     def align_dims(self, replace: bool = False, **alignment) -> xr.Dataset:
         """Accessor for utils.align_dims"""
