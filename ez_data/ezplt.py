@@ -7,7 +7,7 @@ from matplotlib.axes import Axes
 from matplotlib.lines import Line2D
 from matplotlib.colorbar import Colorbar
 from matplotlib.container import ErrorbarContainer
-from matplotlib.collections import FillBetweenPolyCollection
+from matplotlib.collections import LineCollection, FillBetweenPolyCollection
 
 import xarray as xr
 import numpy as np
@@ -85,7 +85,7 @@ def errorplot(x: DARR, y: DARR,
     """
     
     ekwargs = ekwargs or {}
-    chart = ax or plt
+    chart = ax or plt.gca()
     make_algebraic(x)
     make_algebraic(y)
     make_algebraic(xerr)
@@ -114,80 +114,68 @@ def errorplot(x: DARR, y: DARR,
     style_xr_ylabel(y)
     return tuple(result)
 
-WATERFALL = List[List[Line2D]] | Tuple[List[List[Line2D]], Colorbar]
-def waterfall(x: DARR, y: DARR, z: DARR, 
-              ax: Axes = None, 
-              cmap: str | colors.Colormap = 'RdBu', 
+WATERFALL = Tuple[LineCollection, Colorbar] | LineCollection
+def waterfall(x: DARR, y: DARR, z: DARR,
+              ax: Axes = None,
+              cmap: str | colors.Colormap = 'RdBu',
               norm: cm.ScalarMappable = None,
               cbar: bool = True,
-              logz: bool = False, 
-              vmin: float = None, vmax: float = None, 
+              logz: bool = False,
+              vmin: float = None, vmax: float = None,
               **kwargs) -> WATERFALL:
     """
     Create a waterfall plot 
     (series of lines plots with colors corresponding to some third variable)
     """
 
-    chart = ax or plt
+    chart = ax or plt.gca()
     make_algebraic(x)
     make_algebraic(y)
     make_algebraic(z)
 
+    xval = get_arr_values(x)
+    yval = get_arr_values(y)
+    zval = get_arr_values(z).ravel()
+
+    if xval.ndim != 2 or yval.ndim != 2:
+        raise ValueError(f"x and y should be two dimensional")
+    if xval.shape != yval.shape:
+        raise ValueError(f"x and y must have the same shape")
+    
     if isinstance(cmap, str):
         cmap = plt.get_cmap(cmap)
 
     if norm is None:
-        vmin = vmin or float(z.min())
-        vmax = vmax or float(z.max())
+        vmin = vmin or float(zval.min())
+        vmax = vmax or float(zval.max())
         if logz:
             norm = colors.LogNorm(vmin, vmax)
         else:
             norm = colors.Normalize(vmin, vmax)
 
-    sm = cm.ScalarMappable(norm, cmap)
-
-    xval = get_arr_values(x)
-    yval = get_arr_values(y)
-    zval = get_arr_values(z)
-    
-    if xval.ndim != 2 or yval.ndim != 2:
-        raise ValueError(f"x and y should be two dimensional")
-    if xval.shape != yval.shape:
-        raise ValueError(f"x and y must have the same shape")
-    if not zval.ndim in [1, 2]:
-        raise ValueError(f"z should be 1 or 2 dimensional")
-    
-    zval = zval.flatten()
-
-    Nlines = len(zval)
-    shape = xval.shape
-    if not Nlines in shape:
+    if zval.size == xval.shape[0]:
+        segs = [np.column_stack([xval[i, :], yval[i, :]]) 
+                for i in range(xval.shape[0])]
+    elif zval.size == xval.shape[1]:
+        segs = [np.column_stack([xval[:, i], yval[:, i]]) 
+                for i in range(xval.shape[1])]
+    else:
         raise ValueError(f"Provided z does not match the dimensions of x and y")
     
-    lines = []
-    if Nlines == shape[0]:
-        for i in range(Nlines):
-            lines.append(
-                chart.plot(x[i, :], y[i, :], color = cmap(norm(z[i])), **kwargs)
-            )
-    else:
-        for i in range(Nlines):
-            lines.append(
-                chart.plot(x[:, i], y[:, i], color = cmap(norm(z[i])), **kwargs)
-            )
+    # create LineCollection so we have colormap linkage
+    lc = LineCollection(segs, array=zval, cmap=cmap, norm=norm, **kwargs)
+    chart.add_collection(lc)
+    chart.autoscale()
 
-    style_xr_xlabel(x)
-    style_xr_ylabel(y)
+    style_xr_xlabel(x, chart)
+    style_xr_ylabel(y, chart)
 
     if cbar:
-        if ax:
-            c_bar = plt.colorbar(sm, ax = ax)
-        else:
-            c_bar = plt.colorbar(sm, ax = plt.gca())
+        c_bar = plt.colorbar(lc, ax=chart)
         style_xr_colorbar(z, c_bar)
-        return lines, c_bar
+        return lc, c_bar
     
-    return lines
+    return lc
 
 """Accessors for xarray Datasets and DataArrays"""
 
