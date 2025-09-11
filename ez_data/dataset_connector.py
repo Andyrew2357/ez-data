@@ -224,7 +224,7 @@ def sqlite_to_xarray(path: str | Path, duplicate_mode: str = 'stack') -> xr.Data
     Load a sweep stored in SQLite into an xarray.Dataset
     """
 
-    path = Path(path).with_suffix(".db")
+    path = Path(path).with_suffix('.db')
     conn = sqlite3.connect(path)
 
     try:
@@ -251,14 +251,14 @@ def sqlite_to_xarray(path: str | Path, duplicate_mode: str = 'stack') -> xr.Data
                 agg_funcs['timestamp'] = 'last'
             df = df.groupby(dims).agg(agg_funcs)
 
-        elif duplicate_mode == 'stack':
+        elif duplicate_mode == 'stack' and ('repeat' not in schema['dims']):
             df = df.copy()
             df['repeat'] = df.groupby(dims).cumcount()
             df = df.set_index(dims + ['repeat'])
             dims += ['repeat']
 
         else:
-            df.set_index(dims)
+            df = df.set_index(dims)
 
         ds = df.to_xarray().transpose(*dims)
 
@@ -269,7 +269,7 @@ def sqlite_to_xarray(path: str | Path, duplicate_mode: str = 'stack') -> xr.Data
         # attach metadata
         cur.execute("SELECT key, value FROM metadata")
         for key, value in cur.fetchall():
-            if key == "__schema__":
+            if key == '__schema__':
                 continue
             try:
                 ds.attrs[key] = json.loads(value)
@@ -285,7 +285,7 @@ def sqlite_to_xarray(path: str | Path, duplicate_mode: str = 'stack') -> xr.Data
                     ds[var].attrs[key] = value
 
         # promote physical coordinates to coords
-        for cname in schema["coord_names"]:
+        for cname in schema['coord_names']:
             if cname in ds:
                 ds = ds.set_coords(cname)
 
@@ -293,3 +293,73 @@ def sqlite_to_xarray(path: str | Path, duplicate_mode: str = 'stack') -> xr.Data
         conn.close()
 
     return ds
+
+def xarray_to_sqlite(ds: xr.Dataset, path: str | Path, overwrite: bool = False):
+    """
+    Save an xarray.Dataset to SQLite in the same schema as DsetConnector
+    """
+
+    path = Path(path).with_suffix('.db')
+    if path.exists():
+        if overwrite: 
+            path.unlink()
+        else:
+            raise FileExistsError(
+                f"{path} already exists. Use overwrite = True to replace."
+            )
+        
+    try:
+        conn = sqlite3.connect(path)
+        cur = conn.cursor()
+
+        # create schema tables
+        cur.execute("CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT)")
+        cur.execute(
+            "CREATE TABLE var_metadata (var_name TEXT, key TEXT, value TEXT, "
+            "PRIMARY KEY (var_name, key))"
+        )
+
+        # build schema from dataset
+        dims = list(ds.dims)
+        shape = [ds.sizes[d] for d in dims]
+        coord_names = [c for c in ds.coords if c not in dims]
+        data_names = list(ds.data_vars)
+
+        schema = {
+            'dims'       : dims,
+            'shape'      : shape,
+            'coord_names': coord_names,
+            'data_names' : data_names,
+            'timestamp'  : 'timestamp' in ds,
+            'version'    : 1.0,
+        }
+
+        cur.execute(
+            "INSERT INTO metadata (key, value) VALUES (?, ?)",
+            ('__schema__', json.dumps(schema)),
+        )
+
+        # global attributes
+        for k, v in ds.attrs.items():
+            cur.execute(
+                "INSERT INTO metadata (key, value) VALUES (?, ?)",
+                (k, json.dumps(_to_builtin(v))),
+            )
+
+        # variable attributes
+        for var in list(ds.coords) + list(ds.data_vars):
+            for k, v in ds[var].attrs.items():
+                cur.execute(
+                    "INSERT INTO var_metadata (var_name, key, value) VALUES (?, ?, ?)",
+                    (var, k, json.dumps(_to_builtin(v))),
+                )
+
+        # flatten dataset to dataframe
+        df = ds.to_dataframe().reset_index()
+
+        # store sweep table
+        df.to_sql('sweep', conn, if_exists = 'replace', index = False)
+        conn.commit()
+
+    finally:
+        conn.close()

@@ -4,7 +4,7 @@ from .fitting import curve_fit, curve_fit_peaks, fit_peaks
 from .utils import (align_dims, apply_transform, apply_linear_transform, 
                     bin_to_grid, parallelepiped_mask, smart_sel, 
                     where_parallelepiped)
-from .dataset_connector import sqlite_to_xarray
+from .dataset_connector import sqlite_to_xarray, xarray_to_sqlite
 import numpy as np
 import xarray as xr
 from pathlib import Path
@@ -15,9 +15,14 @@ class ezDatasetAccessor():
     def __init__(self, xr_obj: xr.Dataset):
         self._obj = xr_obj
 
+    @staticmethod
     def from_sqlite(path: str | Path, duplicate_mode: str = 'stack') -> xr.Dataset:
         """Accessor for dataset_connector.sqlite_to_xarray"""
         return sqlite_to_xarray(path, duplicate_mode = duplicate_mode)
+
+    def to_sqlite(self, path: str | Path, overwrite: bool = False):
+        """Accessor for dataset_connector.xarray_to_sqlite"""
+        xarray_to_sqlite(self._obj, path, overwrite = overwrite)
 
     def align_dims(self, replace: bool = False, **alignment) -> xr.Dataset:
         """Accessor for utils.align_dims"""
