@@ -23,7 +23,7 @@ def make_algebraic(arr: DARR | None):
     """
 
     if arr is None or isinstance(arr, xr.DataArray):
-        return  
+        return
     arr = np.array(arr)
 
 def get_arr_values(arr: DARR) -> np.ndarray:
@@ -202,6 +202,7 @@ class ezpltDatasetAccessor():
                 return self._obj[a]
             except:
                 raise ValueError(f"'{a}' is unrecognized.")
+        return a
 
     def errorplot(self, 
                   x: str | DARR, y: str | DARR,
@@ -250,6 +251,7 @@ class ezpltDataArrayAccessor():
                 return self._obj[a]
             except:
                 raise ValueError(f"'{a}' is unrecognized.")
+        return a
 
     def errorplot(self, 
                   x: str | DARR = None, y: str | DARR = None,
