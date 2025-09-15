@@ -16,9 +16,12 @@ class ezDatasetAccessor():
         self._obj = xr_obj
 
     @staticmethod
-    def from_sqlite(path: str | Path, duplicate_mode: str = 'stack') -> xr.Dataset:
+    def from_sqlite(path: str | Path, 
+                    duplicate_mode: str = 'stack', 
+                    dropbox_mode: bool = False) -> xr.Dataset:
         """Accessor for dataset_connector.sqlite_to_xarray"""
-        return sqlite_to_xarray(path, duplicate_mode = duplicate_mode)
+        return sqlite_to_xarray(path, duplicate_mode = duplicate_mode, 
+                                dropbox_mode = dropbox_mode)
 
     def to_sqlite(self, path: str | Path, overwrite: bool = False):
         """Accessor for dataset_connector.xarray_to_sqlite"""

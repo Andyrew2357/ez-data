@@ -1,8 +1,10 @@
 import json
 import sqlite3
+import warnings
 import numpy as np
 import pandas as pd
 import xarray as xr
+from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -14,6 +16,12 @@ def _to_builtin(obj):
     if hasattr(obj, "item"):  # catches numpy scalars
         return obj.item()
     return obj
+
+class CheckpointMode(Enum):
+    NONE     = 'none'
+    POINT    = 'point'
+    SIZE     = 'size'
+    ROWS     = 'rows'
 
 class DsetConnector():
     """
@@ -30,13 +38,33 @@ class DsetConnector():
         data_names : List[str] = None,
         timestamp  : bool      = None,
         use_buffer : bool      = False,
-        buffer_size: int       = 100
+        buffer_size: int       = 100,
+        checkpoint_mode: str | CheckpointMode = CheckpointMode.NONE,
     ):
 
         self.path = Path(path).with_suffix(".db")
         self.use_buffer = use_buffer
         self.buffer_size = buffer_size
         self.buffer: List[tuple] = []
+        self.flush_count = 0
+
+        if isinstance(checkpoint_mode, CheckpointMode):
+            self.checkpoint_mode = checkpoint_mode
+            self.checkpoint_param = None
+        elif isinstance(checkpoint_mode, str):
+            if checkpoint_mode in ('none', 'point'):
+                self.checkpoint_mode = CheckpointMode(checkpoint_mode)
+                self.checkpoint_param = None
+            elif checkpoint_mode.startswith("rows:"):
+                self.checkpoint_mode = CheckpointMode.ROWS
+                self.checkpoint_param = int(checkpoint_mode.split(":")[1])
+            elif checkpoint_mode.startswith("size:"):
+                self.checkpoint_mode = CheckpointMode.SIZE
+                self.checkpoint_param = int(checkpoint_mode.split(":")[1])
+            else:
+                raise ValueError(f"Invalid checkpoint_mode: {checkpoint_mode}")
+        else:
+            raise TypeError("checkpoint_mode must be str or CheckpointMode")
 
         self.conn = sqlite3.connect(self.path)
         self.cur = self.conn.cursor()
@@ -71,7 +99,7 @@ class DsetConnector():
             self._init_tables()
             self._store_schema()
 
-        self._insert_sql = self._make_insert_sql()        
+        self._insert_sql = self._make_insert_sql()
 
     def _has_tables(self) -> bool:
         self.cur.execute("SELECT name FROM sqlite_master WHERE type='table'")
@@ -196,6 +224,23 @@ class DsetConnector():
             self.conn.commit()
             self.buffer.clear()
 
+        self.flush_count += 1
+        if self.checkpoint_mode == CheckpointMode.NONE:
+            return
+        elif self.checkpoint_mode == CheckpointMode.POINT:
+            self._checkpoint()
+        elif self.checkpoint_mode == CheckpointMode.SIZE:
+            if self.flush_count % self.checkpoint_param == 0:
+                self._checkpoint()
+        elif self.checkpoint_mode == CheckpointMode.ROWS:
+            if self.flush_count * self.buffer_size >= self.checkpoint_param:
+                self._checkpoint()
+                self.flush_count = 0
+    
+    def _checkpoint(self):
+        self.cur.execute(f"PRAGMA wal_checkpoint(PASSIVE)")
+        self.conn.commit()
+
     def add_global_attrs(self, attrs: Dict[str, Any]):
         for k, v in attrs.items():
             self.cur.execute(
@@ -219,13 +264,33 @@ class DsetConnector():
         self.flush()
         self.conn.close()
 
-def sqlite_to_xarray(path: str | Path, duplicate_mode: str = 'stack') -> xr.Dataset:
+def sqlite_to_xarray(path: str | Path, 
+                     duplicate_mode: str = 'stack', 
+                     dropbox_mode: bool = False) -> xr.Dataset:
     """
     Load a sweep stored in SQLite into an xarray.Dataset
     """
 
     path = Path(path).with_suffix('.db')
-    conn = sqlite3.connect(path)
+    try:
+        conn = sqlite3.connect(f'file:{path}?mode=ro', uri=True)
+    except sqlite3.DatabaseError as e:
+        if not dropbox_mode:
+            warnings.warn(
+                "DB and WAL files are inconsistent. Use `dropbox_mode`=True "
+                "to ignore WAL in favor of a stale view."
+            )
+            raise
+        warnings.warn(
+            "DB and WAL files are inconsistent. Returning a stale view."
+        )
+        
+        # Fallback: read only the main .db file bytes (ignoring WAL)
+        file_conn = sqlite3.connect(str(path))
+        # Create an in-memory DB
+        conn = sqlite3.connect(":memory:")
+        file_conn.backup(conn)
+        file_conn.close()
 
     try:
         cur = conn.cursor()
