@@ -1,5 +1,6 @@
 """Tools for plotting; compatible with xarray objects"""
 
+import warnings
 import matplotlib.pyplot as plt
 from matplotlib import cm
 from matplotlib import colors
@@ -177,6 +178,158 @@ def waterfall(x: DARR, y: DARR, z: DARR,
     
     return lc
 
+class ComplexMeshController():
+    def __init__(self, x: DARR, y: DARR, *, 
+                 zx: DARR = None, zy: DARR = None, 
+                 zr: DARR = None, zt: DARR = None,
+                 axes   : Tuple[Axes, Axes]          = None,
+                 figsize: Tuple[float, float]        = (12, 5),
+                 cmaps  : Tuple[str | colors.Colormap, 
+                            str | colors.Colormap]   = ('RdBu_r', None),
+                 norms  : Tuple[cm.ScalarMappable, 
+                            cm.ScalarMappable]       = (None, None),
+                 vmins  : Tuple[float, float]        = (None, None), 
+                 vmaxs  : Tuple[float, float]        = (None, None),
+                 cbar   : Tuple[bool, bool]          = (True, True),
+                 shading: str                        = 'auto',
+                 connect_scroll_on_init: bool        = True):
+        """
+        ezplt-style constructor for interactive complex pcolormesh.
+
+        Provide either (zx, zy) = (real, imag) OR (zr, zt) = (magnitude, phase).
+        x, y, zx, zy, zr, zt may be numpy arrays or xarray.DataArray.
+        """
+
+        # store original inputs for labeling
+        self._orig_x, self._orig_y = x, y
+        self._orig_zs = []
+        self.x, self.y = get_arr_values(x), get_arr_values(y)
+        self.phase = 0.0
+        self.shading = shading
+
+        norms = norms or (None, None)
+        vmins = vmins or (None, None)
+        vmaxs = vmaxs or (None, None)
+
+        # build and store base complex array Z0 once
+        if zx is not None and zy is not None:
+            self.mode = 'realimag'
+            rx, ix = get_arr_values(zx), get_arr_values(zy)
+            self.Z0 = rx + 1j * ix
+            self._orig_zs = [zx, zy]
+        elif zr is not None and zt is not None:
+            self.mode = 'magphase'
+            mag, ph = get_arr_values(zr), get_arr_values(zt)
+            self.Z0 = mag * np.exp(1j * ph)
+            self._orig_zs = [zr, zt]
+            if cmaps[1] is None:
+                cmaps[1] = 'colorwheel'
+        else:
+            raise ValueError("Must provide either (zx, zy) or (zr, zt).")
+
+        # figure/axes
+        if axes is None:
+            self.fig, self.axes = plt.subplots(1, 2, figsize = figsize)
+        else:
+            self.fig = axes[0].figure
+            self.axes = axes
+
+        self._autoscale = [False, False]
+        for i in (0, 1):
+            if norms[i] is None and vmins[i] is None and vmaxs[i] is None:
+                self._autoscale[i] = True
+
+        # initial draw
+        comps = self._compute_components(0.0)
+        self.meshes, self.cbars = [], []
+        for i, (ax, data, zorig) in enumerate(zip(self.axes, comps, 
+                                                  self._orig_zs)):
+            norm = norms[i] or (colors.Normalize(vmin=vmins[i], vmax=vmaxs[i]) 
+                if (vmins[i] is not None or vmaxs[i] is not None) else None)
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", UserWarning)
+                qm = ax.pcolormesh(self.x, self.y, data, shading=self.shading, 
+                                   cmap=cmaps[i], norm=norm)
+            style_xr_xlabel(self._orig_x, ax)
+            style_xr_ylabel(self._orig_y, ax)
+
+            cb = None
+            if cbar[i]:
+                cb = self.fig.colorbar(qm, ax=ax)
+                style_xr_colorbar(zorig, cb)
+
+            self.meshes.append(qm)
+            self.cbars.append(cb)
+
+        self.suptitle = self.fig.suptitle(fR"$\phi$ = {self.phase:.2f} rad")
+        plt.tight_layout()
+
+        if connect_scroll_on_init:
+            self.connect_scroll()
+
+    def _compute_components(self, phi):
+        Z = self.Z0 * np.exp(1j * phi)
+        if self.mode == 'realimag':
+            return (np.real(Z), np.imag(Z))
+        else:
+            return (np.abs(Z), np.angle(Z))
+
+    def update_phase(self, phi):
+        self.phase = phi % (2 * np.pi)
+        comps = self._compute_components(self.phase)
+        for i, (qm, data) in enumerate(zip(self.meshes, comps)):
+            qm.set_array(data.ravel())
+
+            if self._autoscale[i]:
+                try:
+                    qm.autoscale()
+                except Exception:
+                    try:
+                        if hasattr(qm, "norm") and qm.norm is not None:
+                            qm.norm.autoscale(qm.get_array())
+                    except Exception:
+                        pass
+                if self.cbars[i] is not None:
+                    try:
+                        self.cbars[i].update_normal(qm)
+                    except Exception:
+                        pass
+
+        self.suptitle.set_text(fR"$\phi$ = {self.phase:.2f} rad")
+        self.fig.canvas.draw_idle()
+
+    def connect_scroll(self, step=0.01):
+        try:
+            self.fig.canvas.capture_scroll = True
+        except Exception:
+            pass
+        def on_scroll(event):
+            if event.button == 'up':
+                self.update_phase(self.phase + step)
+            elif event.button == 'down':
+                self.update_phase(self.phase - step)
+        self.fig.canvas.mpl_connect('scroll_event', on_scroll)
+
+    def add_slider(self, step=0.01, start=0.0, end=2*np.pi):
+        import ipywidgets as widgets
+        slider = widgets.FloatSlider(value=self.phase, min=start, max=end, 
+                                     step=step, description=R"$\phi$")
+        def _on_change(change):
+            if change.get('name') == 'value':
+                self.update_phase(change['new'])
+        slider.observe(_on_change, names='value')
+        from IPython.display import display
+        display(slider)
+        return slider
+
+def ccolormesh(x: DARR, y: DARR, *, 
+               zx: DARR = None, zy: DARR = None, 
+               zr: DARR = None, zt: DARR = None, 
+               **kwargs) -> ComplexMeshController:
+    """Convenience wrapper for ComplexMeshController."""
+    return ComplexMeshController(x, y, zx=zx, zy=zy, zr=zr, zt=zt, **kwargs)
+
+
 """Accessors for xarray Datasets and DataArrays"""
 
 @xr.register_dataset_accessor("ezplt")
@@ -227,6 +380,19 @@ class ezpltDatasetAccessor():
 
         return waterfall(x, y, z, ax, 
                          cmap, norm, cbar, logz, vmin, vmax, **kwargs)
+    
+    def ccolormesh(self, x: str | DARR, y: str | DARR, 
+                   zx: str | DARR = None, zy: str | DARR = None, 
+                   zr: str | DARR = None, zt: str | DARR = None, 
+                   **kwargs):
+        """Accessor to ccolormesh"""
+        x = self._get_arr(x)
+        y = self._get_arr(y)
+        zx = self._get_arr(zx)
+        zy = self._get_arr(zy)
+        zr = self._get_arr(zr)
+        zt = self._get_arr(zt)
+        return ccolormesh(x, y, zx=zx, zy=zy, zr=zr, zt=zt, **kwargs)
     
 @xr.register_dataarray_accessor("ezplt")
 class ezpltDataArrayAccessor():
