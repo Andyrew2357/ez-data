@@ -199,7 +199,7 @@ class ezDatasetAccessor():
         ds['cq'] = xr.DataArray(cq, dims = ds[k_chi_r].dims, 
             attrs = {'long_name': R'$c_q$', 'units': R'F$\cdot$m$^{-2}$'})
         ds['AR'] = xr.DataArray(AR, dims = ds[k_chi_r].dims, 
-            attrs = {'long_name': R'$AR_s$', 'units': R'm$^2\Omega$'})
+            attrs = {'long_name': R'$AR_s$', 'units': R'$\Omega\cdot$m$^2$'})
         return ds
     
     def compressibility(self,
@@ -219,7 +219,7 @@ class ezDatasetAccessor():
             attrs = {'long_name': R'$\frac{d\mu}{dn}$', 
                      'units': R'eV$\cdot$nm$^{-2}$'})
         ds['AR'] = xr.DataArray(AR, dims = ds[k_chi_r].dims, 
-            attrs = {'long_name': R'$AR_s$', 'units': R'm$^2\Omega$'})
+            attrs = {'long_name': R'$AR_s$', 'units': R'$\Omega\cdot$m$^2$'})
         return ds
 
     def phase_correct(self,
