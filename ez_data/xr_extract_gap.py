@@ -1,18 +1,29 @@
 from . import xr_tools
-from .extract_gap import mu
+from .extract_gap import mu, tl_model, lf_model, phase_correct
 from .ezplt import errorplot, style_xr_xlabel
 
 from matplotlib import colors
 import matplotlib.pyplot as plt
 import numpy as np
 import xarray as xr
-from typing import Tuple
+from typing import Tuple, Type
+
+def _get_attr_parm(ds: xr.Dataset, p, type_: Type = float):
+    if not p in ds.attrs:
+        raise ValueError(f"'{p}' is not a dataset attribute")
+    attr = ds.attrs[p]
+    if isinstance(attr, type_):
+        return attr
+    elif 'value' in attr and isinstance(attr['value'], type_):
+        return attr['value']
+    else:
+        raise ValueError(f"Cannot locate '{p}' value of the right type.")
 
 class GappedState():
     def __init__(self, ds: xr.Dataset, # must be aligned to n and D properly
-                 chi_g: float, var_chi_g: float, 
-                 f: float, Cb: float, 
-                 gamma: float, var_gamma: float,
+                 chi_g: float = None, var_chi_g: float = None, 
+                 f: float = None, Cb: float = None, 
+                 gamma: float = None, var_gamma: float = None,
                  label: str = '',
                  k_chi_r: str = 'Cex',
                  k_chi_i: str = 'Closs',
@@ -21,12 +32,12 @@ class GappedState():
                  k_x: str = 'n', 
                  k_y: str = 'D'):
         self.ds = ds
-        self.chi_g = chi_g
-        self.var_chi_g = var_chi_g
-        self.f = f
-        self.cb = Cb
-        self.gamma = gamma
-        self.var_gamma = var_gamma
+        self.chi_g = chi_g or _get_attr_parm(ds, 'chi_g', float)
+        self.var_chi_g = var_chi_g or _get_attr_parm(ds, 'var_chi_g', float)
+        self.f = f or _get_attr_parm(ds, 'f', float)
+        self.cb = Cb or _get_attr_parm(ds, 'Cb', float)
+        self.gamma = gamma or _get_attr_parm(ds, 'gamma', float)
+        self.var_gamma = var_gamma or _get_attr_parm(ds, 'var_gamma', float)
         self.label = label
         self.k_chi_r, self.k_chi_i = k_chi_r, k_chi_i
         self.k_vt, self.k_vb = k_vt, k_vb
@@ -115,3 +126,110 @@ class GappedState():
             plt.ylabel(r'$\Delta\mu$ [meV]')
         else:
             ax.set_ylabel(r'$\Delta\mu$ [meV]')
+
+def extract_cqAR(ds: xr.Dataset,
+                 chi_g: float                = None,
+                 chi_b: float | xr.DataArray = None,
+                 Cb: float                   = None, 
+                 gamma: float                = None,
+                 f: float                    = None,
+                 k_chi_r: str                = 'Cex',
+                 k_chi_i: str                = 'Closs',
+                 model: str                  = 'tl_model',
+                ) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Extract quantum capacitance and AR (sheet resistance * area) from 
+    penetration capacitance data.
+    """
+
+    chi_g = chi_g or _get_attr_parm(ds, 'chi_g', float)
+    chi_b = chi_b or _get_attr_parm(ds, 'chi_b', float)
+    Cb = Cb or _get_attr_parm(ds, 'Cb', float)
+    gamma = gamma or _get_attr_parm(ds, 'gamma', float)
+    f = f or _get_attr_parm(ds, 'f', float)
+    if model == 'tl_model':
+        return tl_model(ds[k_chi_r].values, ds[k_chi_i].values, 
+                        chi_g, chi_b, Cb, gamma, 2*np.pi*f) 
+    elif model == 'lf_model':
+        return lf_model(ds[k_chi_r].values, ds[k_chi_i].values, 
+                        chi_g, chi_b, Cb, gamma)
+    else:
+        raise ValueError(
+            f"'{model}' is not a supported model. Use 'tl_model' or 'lf_model'"
+        )
+    
+def extract_compressibility(ds: xr.Dataset,
+                            chi_g: float                = None,
+                            chi_b: float | xr.DataArray = None,
+                            Cb: float                   = None, 
+                            gamma: float                = None,
+                            f: float                    = None,
+                            k_chi_r: str                = 'Cex',
+                            k_chi_i: str                = 'Closs',
+                            model: str                  = 'tl_model',
+                            ) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Extract cq, AR. Then report dmu/dn and AR with dmu/dn in units of eVnm^2
+    """
+
+    cq, AR = extract_cqAR(ds, chi_g, chi_b, Cb, gamma, f, 
+                          k_chi_r, k_chi_i, model)
+    f =  1.602e-1 # (nm/m)^2 / q
+    return f / cq, AR
+    
+
+@xr.register_dataset_accessor("ezgap")
+class ezDatasetAccessor():
+    def __init__(self, xr_obj: xr.Dataset):
+        self._obj = xr_obj
+
+    def cqAR(self,
+             chi_g: float                = None,
+             chi_b: float | xr.DataArray = None,
+             Cb: float                   = None, 
+             gamma: float                = None,
+             f: float                    = None,
+             k_chi_r: str                = 'Cex',
+             k_chi_i: str                = 'Closs',
+             model: str                  = 'tl_model') -> xr.Dataset:
+        """Accessor to extract_cqAR"""
+        ds = self._obj.copy()
+        cq, AR = extract_cqAR(ds, chi_g, chi_b, Cb, gamma, f, 
+                              k_chi_r, k_chi_i, model)
+        ds['cq'] = xr.DataArray(cq, dims = ds[k_chi_r].dims, 
+            attrs = {'long_name': R'$c_q$', 'units': R'F$\cdot$m$^{-2}$'})
+        ds['AR'] = xr.DataArray(AR, dims = ds[k_chi_r].dims, 
+            attrs = {'long_name': R'$AR_s$', 'units': R'm$^2\Omega$'})
+        return ds
+    
+    def compressibility(self,
+                        chi_g: float                = None,
+                        chi_b: float | xr.DataArray = None,
+                        Cb: float                   = None, 
+                        gamma: float                = None,
+                        f: float                    = None,
+                        k_chi_r: str                = 'Cex',
+                        k_chi_i: str                = 'Closs',
+                        model: str                  = 'tl_model') -> xr.Dataset:
+        """Accessor to extract_compressibility"""
+        ds = self._obj.copy()
+        dmu_dn, AR = extract_compressibility(ds, chi_g, chi_b, Cb, gamma, f, 
+                                             k_chi_r, k_chi_i, model)
+        ds['dmu_dn'] = xr.DataArray(dmu_dn, dims = ds[k_chi_r].dims, 
+            attrs = {'long_name': R'$\frac{d\mu}{dn}$', 
+                     'units': R'eV$\cdot$nm$^{-2}$'})
+        ds['AR'] = xr.DataArray(AR, dims = ds[k_chi_r].dims, 
+            attrs = {'long_name': R'$AR_s$', 'units': R'm$^2\Omega$'})
+        return ds
+
+    def phase_correct(self,
+                      X_spur: float | xr.DataArray, 
+                      Y_spur: float | xr.DataArray,
+                      k_chi_r: str = 'Cex', k_chi_i: str = 'Closs',
+                      ) -> xr.Dataset:
+        """Accessor to phase_correct"""
+        chi = (k_chi_r, k_chi_i)
+        return self._obj.ez.transform(
+            lambda x, y: phase_correct(x, y, X_spur, Y_spur), 
+            chi, chi, xr_output_type='data_vars',
+        )

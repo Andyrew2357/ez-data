@@ -178,6 +178,31 @@ def waterfall(x: DARR, y: DARR, z: DARR,
     
     return lc
 
+def _check_and_fix_shape(x: DARR, y: DARR, Z: DARR) -> DARR:
+    """
+    Ensure Z has a shape compatible with coordinates x, y for pcolormesh.
+    Handles both 1D (x, y) and 2D (meshgrid) coordinate cases.
+    """
+
+    if x.ndim == 1 and y.ndim == 1:
+        expected = (len(y), len(x))
+    elif x.ndim == 2 and y.ndim == 2:
+        if x.shape != y.shape:
+            raise ValueError("x and y must have the same shape when 2D.")
+        expected = x.shape
+    else:
+        raise ValueError("x and y must either both be 1D or both be 2D.")
+
+    if Z.shape == expected:
+        return Z
+    elif Z.shape == expected[::-1]:
+        return Z.transpose()
+    else:
+        raise ValueError(
+            f"Incompatible shapes: Z {Z.shape}, x {x.shape}, y {y.shape}, "
+            f"expected {expected} (or its transpose)."
+        )
+
 class ComplexMeshController():
     def __init__(self, x: DARR, y: DARR, *, 
                  zx: DARR = None, zy: DARR = None, 
@@ -215,11 +240,15 @@ class ComplexMeshController():
         if zx is not None and zy is not None:
             self.mode = 'realimag'
             rx, ix = get_arr_values(zx), get_arr_values(zy)
+            rx = _check_and_fix_shape(self.x, self.y, rx)
+            ix = _check_and_fix_shape(self.x, self.y, ix)
             self.Z0 = rx + 1j * ix
             self._orig_zs = [zx, zy]
         elif zr is not None and zt is not None:
             self.mode = 'magphase'
             mag, ph = get_arr_values(zr), get_arr_values(zt)
+            mag = _check_and_fix_shape(self.x, self.y, mag)
+            ph = _check_and_fix_shape(self.x, self.y, ph)
             self.Z0 = mag * np.exp(1j * ph)
             self._orig_zs = [zr, zt]
             if cmaps[1] is None:

@@ -41,8 +41,9 @@ class ezDatasetAccessor():
                   output_cols: str | List[str], 
                   xr_output_type: str = 'coords') -> xr.Dataset:
         """Accessor to apply_transform"""
-        return apply_transform(self._obj, func, input_cols, 
-                               output_cols, xr_output_type)
+        ds = self._obj.copy()
+        return apply_transform(ds, func, input_cols, output_cols, 
+                               xr_output_type)
     
     def linear_transform(self,
                          matrix: np.ndarray, 
@@ -50,8 +51,9 @@ class ezDatasetAccessor():
                          output_cols: str | List[str], 
                          xr_output_type: str = 'coords') -> xr.Dataset:
         """Accessor to apply_linear_transform"""
-        return apply_linear_transform(self._obj, matrix, input_cols, 
-                                      output_cols, xr_output_type)
+        ds = self._obj.copy()
+        return apply_linear_transform(ds, matrix, input_cols, output_cols, 
+                                      xr_output_type)
     
     def gridded(self, reduce: str | Callable = 'mean', **bins) -> xr.Dataset:
         """Accessor to bin_to_grid"""
