@@ -180,7 +180,7 @@ def apply_transform(obj: pd.DataFrame | xr.Dataset,
         dims = obj[input_cols[0]].dims
         for i, col in enumerate(output_cols):
             data = results[i]
-            preserve_attrs(obj, col, data, dims, xr_output_type)
+            obj = preserve_attrs(obj, col, data, dims, xr_output_type)
 
         return obj
 
@@ -227,7 +227,7 @@ def apply_linear_transform(obj: pd.DataFrame | xr.Dataset,
         for i, col in enumerate(output_cols):
             data = Y[..., i]
             dims = obj[input_cols[0]].dims  # Use dims from first input var
-            preserve_attrs(obj, col, data, dims, xr_output_type)
+            obj = preserve_attrs(obj, col, data, dims, xr_output_type)
             
         return obj
 

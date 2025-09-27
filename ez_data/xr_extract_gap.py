@@ -8,7 +8,11 @@ import numpy as np
 import xarray as xr
 from typing import Tuple, Type
 
-def _get_attr_parm(ds: xr.Dataset, p, type_: Type = float):
+def _get_attr_parm(ds: xr.Dataset, p, type_: Type = float, default = None):
+
+    if default is not None:
+        return default
+
     if not p in ds.attrs:
         raise ValueError(f"'{p}' is not a dataset attribute")
     attr = ds.attrs[p]
@@ -32,12 +36,12 @@ class GappedState():
                  k_x: str = 'n', 
                  k_y: str = 'D'):
         self.ds = ds
-        self.chi_g = chi_g or _get_attr_parm(ds, 'chi_g', float)
-        self.var_chi_g = var_chi_g or _get_attr_parm(ds, 'var_chi_g', float)
-        self.f = f or _get_attr_parm(ds, 'f', float)
-        self.cb = Cb or _get_attr_parm(ds, 'Cb', float)
-        self.gamma = gamma or _get_attr_parm(ds, 'gamma', float)
-        self.var_gamma = var_gamma or _get_attr_parm(ds, 'var_gamma', float)
+        self.chi_g = _get_attr_parm(ds, 'chi_g', float, chi_g)
+        self.var_chi_g = _get_attr_parm(ds, 'var_chi_g', float, var_chi_g)
+        self.f = _get_attr_parm(ds, 'f', float, f)
+        self.cb = _get_attr_parm(ds, 'Cb', float, Cb)
+        self.gamma = _get_attr_parm(ds, 'gamma', float, gamma)
+        self.var_gamma = _get_attr_parm(ds, 'var_gamma', float, var_gamma)
         self.label = label
         self.k_chi_r, self.k_chi_i = k_chi_r, k_chi_i
         self.k_vt, self.k_vb = k_vt, k_vb
@@ -142,11 +146,11 @@ def extract_cqAR(ds: xr.Dataset,
     penetration capacitance data.
     """
 
-    chi_g = chi_g or _get_attr_parm(ds, 'chi_g', float)
-    chi_b = chi_b or _get_attr_parm(ds, 'chi_b', float)
-    Cb = Cb or _get_attr_parm(ds, 'Cb', float)
-    gamma = gamma or _get_attr_parm(ds, 'gamma', float)
-    f = f or _get_attr_parm(ds, 'f', float)
+    chi_g = _get_attr_parm(ds, 'chi_g', float, chi_g)
+    chi_b = _get_attr_parm(ds, 'chi_b', float, chi_b)
+    Cb = _get_attr_parm(ds, 'Cb', float, Cb)
+    gamma = _get_attr_parm(ds, 'gamma', float, gamma)
+    f = _get_attr_parm(ds, 'f', float, f)
     if model == 'tl_model':
         return tl_model(ds[k_chi_r].values, ds[k_chi_i].values, 
                         chi_g, chi_b, Cb, gamma, 2*np.pi*f) 
@@ -216,8 +220,8 @@ class ezDatasetAccessor():
         dmu_dn, AR = extract_compressibility(ds, chi_g, chi_b, Cb, gamma, f, 
                                              k_chi_r, k_chi_i, model)
         ds['dmu_dn'] = xr.DataArray(dmu_dn, dims = ds[k_chi_r].dims, 
-            attrs = {'long_name': R'$\frac{d\mu}{dn}$', 
-                     'units': R'eV$\cdot$nm$^{-2}$'})
+            attrs = {'long_name': R'$d\mu/dn$', 
+                     'units': R'eV$\cdot$nm$^2$'})
         ds['AR'] = xr.DataArray(AR, dims = ds[k_chi_r].dims, 
             attrs = {'long_name': R'$AR_s$', 'units': R'$\Omega\cdot$m$^2$'})
         return ds

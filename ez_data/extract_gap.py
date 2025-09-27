@@ -98,7 +98,7 @@ _get_ztan_inv()
 
 DERIVS_OUT = Tuple[float, float, float, float, float, float]
 
-@np.vectorize
+@np.vectorize(otypes=[float, float])
 def lf_model(chi_r: float, chi_i: float, chi_g: float, chi_b: float, 
              cb: float = 1.0, gamma: float = 1.0, 
              **kwargs) -> Tuple[float, float]:
@@ -132,7 +132,7 @@ def lf_model(chi_r: float, chi_i: float, chi_g: float, chi_b: float,
 
     return cb * (1 + gamma) * (chi_g - chi_r) / (chi_r - chi_b), 0
 
-@np.vectorize
+@np.vectorize(otypes=[float, float, float, float, float, float])
 def lf_model_deriv(chi_r: float, chi_i: float, chi_g: float, chi_b: float,
                    cb: float = 1.0, gamma: float = 1.0, **kwargs
                    ) -> DERIVS_OUT:
@@ -170,7 +170,7 @@ def lf_model_deriv(chi_r: float, chi_i: float, chi_g: float, chi_b: float,
 
     return cq, AR, dcq_dchi_r, dcq_dchi_i, dcq_dchi_g, dcq_dchi_b
 
-@np.vectorize
+@np.vectorize(otypes=[float, float])
 def tl_model(chi_r: float, chi_i: float, 
              chi_g: float, chi_b: float, 
              cb: float = 1.0, gamma: float = 1.0, omega: float = 0.0,
@@ -243,7 +243,7 @@ def tl_model(chi_r: float, chi_i: float,
 
     return cq, AR
 
-@np.vectorize
+@np.vectorize(otypes=[float, float, float, float, float, float])
 def tl_model_deriv(chi_r: float, chi_i: float, 
                    chi_g: float, chi_b: float, 
                    cb: float = 1.0, gamma: float = 1.0, 
