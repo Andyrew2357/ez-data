@@ -19,6 +19,7 @@ dependencies = [
     "cftime",
     "matplotlib",
     "mpld3",
+    "mpmath",
     "pyQT5",
     "xarray",
     "xarray-lmfit",
