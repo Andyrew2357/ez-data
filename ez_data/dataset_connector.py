@@ -203,7 +203,7 @@ class DsetConnector():
         idx      : List[int], 
         coords   : List[float], 
         data     : List[float], 
-        timestamp: float | None
+        timestamp: float | None = None
     ):
         row = tuple(idx) + tuple(coords) + tuple(data)
         if self.timestamp:
@@ -303,6 +303,12 @@ def sqlite_to_xarray(path: str | Path,
 
         # load sweep data
         df = pd.read_sql("SELECT * FROM sweep", conn)
+
+        # Convert binary blobs to integers if necessary
+        for d in dims:
+            if df[d].dtype == 'object' and isinstance(df[d].iloc[0], (bytes, bytearray)):
+                df[d] = df[d].apply(lambda x: np.frombuffer(x, dtype = '<i8')[0])
+
 
         # drop id column if present
         if 'id' in df.columns:
