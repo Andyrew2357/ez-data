@@ -163,7 +163,8 @@ class DsetConnector():
         sweep,
         path: str | Path,
         use_buffer  : bool = False,
-        buffer_size : int  = 100
+        buffer_size : int  = 100,
+        checkpoint_mode: str = 'none',
     ):
         dims = [f"dim{i}" for i in range(sweep.dim)]
         shape = list(sweep.dimensions)
@@ -176,6 +177,7 @@ class DsetConnector():
             timestamp   = sweep.timestamp,
             use_buffer  = use_buffer,
             buffer_size = buffer_size,
+            checkpoint_mode = checkpoint_mode,
         )
 
         # add sweep metadata
@@ -303,39 +305,49 @@ def sqlite_to_xarray(path: str | Path,
 
         # load sweep data
         df = pd.read_sql("SELECT * FROM sweep", conn)
-
-        # Convert binary blobs to integers if necessary
-        for d in dims:
-            if df[d].dtype == 'object' and isinstance(df[d].iloc[0], (bytes, bytearray)):
-                df[d] = df[d].apply(lambda x: np.frombuffer(x, dtype = '<i8')[0])
-
-
-        # drop id column if present
-        if 'id' in df.columns:
-            df = df.drop(columns = 'id')
-
-        # handle duplicates
-        if duplicate_mode in ('mean', 'max', 'min', 'median'):
-            numeric_cols = df.select_dtypes(include = np.number).columns.to_list()
-            agg_funcs = {col: duplicate_mode for col in numeric_cols}
-            if 'timestamp' in df.columns:
-                agg_funcs['timestamp'] = 'last'
-            df = df.groupby(dims).agg(agg_funcs)
-
-        elif duplicate_mode == 'stack' and ('repeat' not in schema['dims']):
-            df = df.copy()
-            df['repeat'] = df.groupby(dims).cumcount()
-            df = df.set_index(dims + ['repeat'])
-            dims += ['repeat']
-
+        if df.empty:
+            # handle the empty case
+            dims = schema['dims']
+            coords = {dim: np.arange(0) for dim in dims}
+            ds = xr.Dataset(coords=coords)
+        
         else:
-            df = df.set_index(dims)
+            # Convert binary blobs to integers if necessary
+            for d in dims:
+                if df[d].dtype == 'object' and isinstance(df[d].iloc[0], (bytes, bytearray)):
+                    df[d] = df[d].apply(lambda x: np.frombuffer(x, dtype = '<i8')[0])
 
-        ds = df.to_xarray().transpose(*dims)
 
-        # Ensure dims are plain integer coordinates, not binary junk
-        for dim, n in zip(dims, schema["shape"]):
-            ds = ds.assign_coords({dim: np.arange(n)})
+            # drop id column if present
+            if 'id' in df.columns:
+                df = df.drop(columns = 'id')
+
+            # handle duplicates
+            if duplicate_mode in ('mean', 'max', 'min', 'median'):
+                numeric_cols = df.select_dtypes(include = np.number).columns.to_list()
+                agg_funcs = {col: duplicate_mode for col in numeric_cols}
+                if 'timestamp' in df.columns:
+                    agg_funcs['timestamp'] = 'last'
+                df = df.groupby(dims).agg(agg_funcs)
+
+            elif duplicate_mode == 'stack' and ('repeat' not in schema['dims']):
+                df = df.copy()
+                df['repeat'] = df.groupby(dims).cumcount()
+                df = df.set_index(dims + ['repeat'])
+                dims += ['repeat']
+
+            else:
+                df = df.set_index(dims)
+
+            ds = df.to_xarray().transpose(*dims)
+
+            # Ensure dims are plain integer coordinates, not binary junk
+            for dim in dims:
+                n_actual = int(ds.sizes.get(dim, 0))
+                if n_actual > 0:
+                    ds = ds.assign_coords({dim: np.arange(n_actual)})
+                else:
+                    ds = ds.assign_coords({dim: np.arange(0)})
 
         # attach metadata
         cur.execute("SELECT key, value FROM metadata")

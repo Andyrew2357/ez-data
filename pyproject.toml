@@ -23,8 +23,7 @@ dependencies = [
     "pyQT5",
     "xarray",
     "xarray-lmfit",
-    "scipy",
-    "tables"
+    "scipy"
 ]
 
 [project.urls]
