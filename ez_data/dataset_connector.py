@@ -47,6 +47,7 @@ class DsetConnector():
         self.buffer_size = buffer_size
         self.buffer: List[tuple] = []
         self.flush_count = 0
+        self.points_count = 0
 
         if isinstance(checkpoint_mode, CheckpointMode):
             self.checkpoint_mode = checkpoint_mode
@@ -66,12 +67,12 @@ class DsetConnector():
         else:
             raise TypeError("checkpoint_mode must be str or CheckpointMode")
 
-        self.conn = sqlite3.connect(self.path)
+        self.conn = sqlite3.connect(self.path, timeout = 30)
         self.cur = self.conn.cursor()
 
         # safe optimizations for this use case
         self.cur.execute("PRAGMA journal_mode=WAL")
-        self.cur.execute("PRAGMA synchronous=OFF")
+        self.cur.execute("PRAGMA synchronous=NORMAL")
         self.cur.execute("PRAGMA temp_store=MEMORY")
 
         if self._has_tables():
@@ -207,6 +208,7 @@ class DsetConnector():
         data     : List[float], 
         timestamp: float | None = None
     ):
+        self.points_count += 1
         row = tuple(idx) + tuple(coords) + tuple(data)
         if self.timestamp:
             row += (timestamp,)
@@ -215,33 +217,42 @@ class DsetConnector():
             self.buffer.append(row)
             if len(self.buffer) >= self.buffer_size:
                 self.flush()
-
         else:
             self.cur.execute(self._insert_sql, row)
             self.conn.commit()
+            self.flush()
 
     def flush(self):
+        self.flush_count += 1
         if self.buffer:
             self.cur.executemany(self._insert_sql, self.buffer)
             self.conn.commit()
             self.buffer.clear()
 
-        self.flush_count += 1
         if self.checkpoint_mode == CheckpointMode.NONE:
             return
         elif self.checkpoint_mode == CheckpointMode.POINT:
             self._checkpoint()
         elif self.checkpoint_mode == CheckpointMode.SIZE:
-            if self.flush_count % self.checkpoint_param == 0:
+            if self.points_count >= self.checkpoint_param:
                 self._checkpoint()
+                self.points_count = 0
         elif self.checkpoint_mode == CheckpointMode.ROWS:
-            if self.flush_count * self.buffer_size >= self.checkpoint_param:
+            if self.flush_count >= self.checkpoint_param:
                 self._checkpoint()
                 self.flush_count = 0
     
     def _checkpoint(self):
-        self.cur.execute(f"PRAGMA wal_checkpoint(PASSIVE)")
+        busy, log_frames, checkpointed_frames = self.cur.execute(
+            f"PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
         self.conn.commit()
+
+        if busy:
+            warnings.warn(
+                f"WAL checkpoint could not complete (busy). "
+                f"Frames in WAL: {log_frames}, checkpointed: {checkpointed_frames}. "
+                "Readers may see stale data until a later checkpoint succeeds."
+            )
 
     def add_global_attrs(self, attrs: Dict[str, Any]):
         for k, v in attrs.items():

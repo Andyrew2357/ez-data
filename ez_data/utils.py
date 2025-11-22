@@ -284,6 +284,10 @@ def bin_to_grid(data: XR_OBJ | pd.DataFrame, reduce: str | Callable = 'mean',
 
 def _bin_dataframe(df: pd.DataFrame, coords: List[str],  reduce: str | Callable, 
                    binspec: dict) -> Tuple[pd.DataFrame, dict]:
+    
+    # Always copy to avoid polluting caller
+    df = df.copy()
+
     # Parse bin edges
     bin_edges = {}
     for dim in coords:
@@ -319,11 +323,16 @@ def _bin_dataframe(df: pd.DataFrame, coords: List[str],  reduce: str | Callable,
 
     # Group by bin indices
     group_cols = [f"_bin_{dim}" for dim in coords]
-    if use_func_directly:
-        grouped = df.groupby(group_cols).agg(
-            lambda g: agg_func(g)).reset_index()
+    if not use_func_directly:
+        # Only aggregate numeric columns
+        numeric_cols = [
+            c for c in df.select_dtypes(include=[np.number]).columns
+            if c not in group_cols
+        ]
+        grouped = df.groupby(group_cols)[numeric_cols].agg(agg_func).reset_index()
     else:
-        grouped = df.groupby(group_cols).agg(agg_func).reset_index()
+        grouped = df.groupby(group_cols).agg(lambda g: agg_func(g)).reset_index()
+
 
     # Add physical coordinate columns back into grouped df
     center_map = {}
