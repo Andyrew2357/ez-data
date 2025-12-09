@@ -47,7 +47,7 @@ def align_dims(obj: XR_OBJ, replace: bool = False, **alignment) -> XR_OBJ:
     
     return obj
 
-def smart_sel(obj: XR_OBJ, tolerance: float = None, **coords) -> XR_OBJ:
+def smart_sel(obj: XR_OBJ, tolerance: float = None, drop: bool=False, **coords) -> XR_OBJ:
     """
     Intelligently select from imperfectly aligned physical coordinates.
 
@@ -57,33 +57,30 @@ def smart_sel(obj: XR_OBJ, tolerance: float = None, **coords) -> XR_OBJ:
         Slices keep dims but mask by range.
     """
 
-    indexers = {}
+    out = obj
 
     for cname, selector in coords.items():
-        if cname not in obj.coords:
+        if cname not in out.coords:
             raise KeyError(f"Coordinate '{cname}' not found.")
 
-        coord = obj.coords[cname]
+        coord = out.coords[cname]
         c_dims = coord.dims
         c_vals = coord.values
 
-        # ---- decide which dim to cut along ------------------------
+        # choose the cut dimension
         if len(c_dims) == 1:
             cut_dim = c_dims[0]
         else:
-            # compute a single variance number per candidate dim
             dim_var = {}
             for d in c_dims:
                 axis = coord.get_axis_num(d)
-                v = np.nanvar(c_vals, axis = axis)
+                v = np.nanvar(c_vals, axis=axis)
                 dim_var[d] = float(np.nanmean(v))
-            cut_dim = max(dim_var, key = dim_var.get)
+            cut_dim = max(dim_var, key=dim_var.get)
 
         cut_axis = coord.get_axis_num(cut_dim)
 
-        # ===========================================================
-        # Scalar selection  ->  drop 'cut_dim'
-        # ===========================================================
+        # scalar selector
         if np.isscalar(selector):
             target = float(selector)
             diff = np.abs(c_vals - target)
@@ -95,42 +92,39 @@ def smart_sel(obj: XR_OBJ, tolerance: float = None, **coords) -> XR_OBJ:
                         f"No '{cname}' values within ±{tolerance} of {target}"
                     )
 
-            # argmin along cut axis -> indices of shape 'remaining dims'
-            idx = np.argmin(diff, axis = cut_axis)
+            idx = np.argmin(diff, axis=cut_axis)
 
-            # remaining dims (in order):
+            # build indexer relative to current object
             rem_dims = tuple(d for d in c_dims if d != cut_dim)
-            idx_da = xr.DataArray(idx, dims = rem_dims)
-            indexers[cut_dim] = idx_da
+            idx_da = xr.DataArray(idx, dims=rem_dims)
 
-        # ===========================================================
-        # Slice selection  ->  keep 'cut_dim' but trim its extent
-        # ===========================================================
-        elif isinstance(selector, slice):
+            out = out.isel({cut_dim: idx_da}, drop=drop)
+            continue
+
+        # slice selector
+        if isinstance(selector, slice):
             lo = -np.inf if selector.start is None else selector.start
             hi =  np.inf if selector.stop  is None else selector.stop
+
             mask = (c_vals >= lo) & (c_vals <= hi)
-
-            # We'll find indices along the cut dimension (cut_axis) where *any*
-            # value along the other dims is within the desired range
-            collapsed = np.any(mask, axis=tuple(i for i in range(mask.ndim) \
-                                                if i != cut_axis))
-
+            collapsed = np.any(mask, axis=tuple(
+                i for i in range(mask.ndim) if i != cut_axis
+            ))
             idxs = np.where(collapsed)[0]
             if len(idxs) == 0:
                 raise ValueError(
                     f"Slice {selector} selects no data on '{cname}'."
                 )
 
-            indexers[cut_dim] = slice(idxs.min(), idxs.max() + 1)
+            out = out.isel({cut_dim: slice(idxs.min(), idxs.max() + 1)}, drop=drop)
+            continue
 
-        else:
-            raise TypeError(
-                f"Selector for '{cname}' must be scalar or slice, "
-                f"got {type(selector)}."
-            )
+        raise TypeError(
+            f"Selector for '{cname}' must be scalar or slice, "
+            f"got {type(selector)}"
+        )
 
-    return obj.isel(**indexers)
+    return out
 
 def preserve_attrs(obj, col, data, dims, xr_output_type):
     # get attrs if variable/coord exists

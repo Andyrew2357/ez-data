@@ -405,7 +405,7 @@ class ezpltDatasetAccessor():
         y = self._get_arr(y)
         z = self._get_arr(z)
         if reduce_zdim:
-            z = z.mean(dim = reduce_zdim)
+            z = z.mean(dim = reduce_zdim, keep_attrs = True)
 
         return waterfall(x, y, z, ax, 
                          cmap, norm, cbar, logz, vmin, vmax, **kwargs)
@@ -473,7 +473,7 @@ class ezpltDataArrayAccessor():
         y = self._obj if y is None else self._get_arr(y)
         z = self._obj if z is None else self._get_arr(z)
         if reduce_zdim:
-            z = z.mean(dim = reduce_zdim)
+            z = z.mean(dim = reduce_zdim, keep_attrs = True)
 
         return waterfall(x, y, z, ax, 
                          cmap, norm, cbar, logz, vmin, vmax, **kwargs)

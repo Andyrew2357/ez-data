@@ -31,9 +31,9 @@ class ezDatasetAccessor():
         """Accessor for utils.align_dims"""
         return align_dims(self._obj, replace, **alignment)
 
-    def sel(self, tolerance: float = None, **coords) -> xr.Dataset:
+    def sel(self, tolerance: float = None, drop: bool = False, **coords) -> xr.Dataset:
         """Accessor for utils.smart_sel"""
-        return smart_sel(self._obj, tolerance, **coords)
+        return smart_sel(self._obj, tolerance, drop, **coords)
     
     def transform(self, 
                   func: Callable[[float | Tuple[float]], float | Tuple[float]], 
@@ -78,9 +78,9 @@ class ezDataArrayAccessor():
         """Accessor for utils.align_dims"""
         return align_dims(self._obj, replace, **alignment)
 
-    def sel(self, tolerance: float = None, **coords) -> xr.DataArray:
+    def sel(self, tolerance: float = None, drop: bool = False, **coords) -> xr.DataArray:
         """Accessor for utils.smart_sel"""
-        return smart_sel(self._obj, tolerance, **coords)
+        return smart_sel(self._obj, tolerance, drop, **coords)
     
     def gridded(self, reduce: str | Callable = 'mean', **bins) -> xr.DataArray:
         """Accessor to bin_to_grid"""
