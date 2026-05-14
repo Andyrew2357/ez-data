@@ -60,9 +60,9 @@ class ezDatasetAccessor():
         return bin_to_grid(self._obj, reduce, **bins)
     
     def where_parallelepiped(self, origin: dict[str, float], 
-                             *verts: Tuple[List[float]]) -> xr.Dataset:
+                             *verts: Tuple[List[float]], **kwargs) -> xr.Dataset:
         """Accessor to where_parallelepiped"""
-        return where_parallelepiped(self._obj, origin, *verts)
+        return where_parallelepiped(self._obj, origin, *verts, **kwargs)
     
     def parallelepiped_mask(self, origin: dict[str, float], 
                             *verts: Tuple[List[float]]) -> xr.DataArray:
@@ -115,9 +115,9 @@ class ezDataArrayAccessor():
                                curve_fit_kwargs, **fit_peaks_kwargs)
 
     def where_parallelepiped(self, origin: dict[str, float], 
-                             *verts: Tuple[List[float]]) -> xr.DataArray:
+                             *verts: Tuple[List[float]], **kwargs) -> xr.DataArray:
         """Accessor to where_parallelepiped"""
-        return where_parallelepiped(self._obj, origin, *verts)
+        return where_parallelepiped(self._obj, origin, *verts, **kwargs)
 
     def parallelepiped_mask(self, origin: dict[str, float], 
                             *verts: Tuple[List[float]]) -> xr.DataArray:

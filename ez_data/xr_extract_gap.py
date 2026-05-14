@@ -237,3 +237,14 @@ class ezDatasetAccessor():
             lambda x, y: phase_correct(x, y, X_spur, Y_spur), 
             chi, chi, xr_output_type='data_vars',
         )
+    
+    def phase_rotate(self,
+        phi: float,
+        k_chi_r: str = 'Cex', k_chi_i: str = 'Closs'
+    ) -> xr.Dataset:
+        chi = (k_chi_r, k_chi_i)
+        s, c = np.sin(phi), np.cos(phi)
+        return self._obj.ez.transform(
+            lambda x, y: (x*c - y*s, x*s + y*c),
+            chi, chi, xr_output_type='data_vars',
+        )

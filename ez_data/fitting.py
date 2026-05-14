@@ -60,6 +60,7 @@ def fit_peaks(da: xr.DataArray,
     dim = dim or da[y].dims[0]
     model = _get_peak_model(peak_model, background)
     results = []
+    y_coord_vals = []
 
     for index in da[dim]:
         slice_da = da.sel({dim: index})
@@ -69,12 +70,14 @@ def fit_peaks(da: xr.DataArray,
         valid = ~np.isnan(yvals)
         if np.count_nonzero(valid) < min_valid_points:
             results.append(None)
+            y_coord_vals.append(np.nan)
             continue
         x_clean = xvals[valid]
         y_clean = yvals[valid]
 
         if min_peak_height is not None and np.nanmax(y_clean) < min_peak_height:
             results.append(None)
+            y_coord_vals.append(np.nan)
             continue
 
         # Normalize x and y
@@ -133,11 +136,17 @@ def fit_peaks(da: xr.DataArray,
                     if param.stderr is not None:
                         param.stderr *= y_std
             results.append(result)
+            peak_x = result.params['peak_center'].value
+            y_physical = slice_da[y].values
+            sort_idx = np.argsort(xvals)
+            y_coord_vals.append(np.interp(peak_x, xvals[sort_idx], 
+                                          y_physical[sort_idx]))
         except Exception:
             results.append(None)
+            y_coord_vals.append(np.nan)
 
-    # Build dataset from results
-    ds = _peak_results_to_dataset(results, da[y], model)
+    ds = _peak_results_to_dataset(results, da[dim], model)
+    ds = ds.assign_coords({y: (dim, y_coord_vals)})
     return ds
 
 

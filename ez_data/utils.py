@@ -1,9 +1,12 @@
 """General tools for manipulating xarray and pandas objects"""
 
+import json
+import sqlite3
 import numpy as np
 import pandas as pd
 import xarray as xr
 import warnings
+from pathlib import Path
 from typing import Callable, List, Tuple
 
 XR_OBJ = xr.Dataset | xr.DataArray
@@ -415,8 +418,8 @@ def _rebuild_xarray(df: pd.DataFrame, original: XR_OBJ, coords: List[str],
         return da
     
 def where_parallelepiped(obj: XR_OBJ, origin: dict[str, float], 
-                         *verts: Tuple[List[float]]) -> XR_OBJ:
-    return obj.where(parallelepiped_mask(obj, origin, *verts))
+                         *verts: Tuple[List[float]], **kwargs) -> XR_OBJ:
+    return obj.where(parallelepiped_mask(obj, origin, *verts), **kwargs)
 
 def parallelepiped_mask(obj: XR_OBJ | pd.DataFrame, 
                         origin: dict[str, float], 
@@ -481,3 +484,198 @@ def parallelepiped_mask(obj: XR_OBJ | pd.DataFrame,
         mask &= mask_from_coefficients(coeffs[r, :])
 
     return mask
+
+"""Dataset Load / Save Tools"""
+
+def _to_builtin(obj):
+    if isinstance(obj, (list, tuple)):
+        return [_to_builtin(x) for x in obj]
+    if isinstance(obj, dict):
+        return {k: _to_builtin(v) for k, v in obj.items()}
+    if hasattr(obj, "item"):  # catches numpy scalars
+        return obj.item()
+    return obj
+
+def sqlite_to_xarray(path: str | Path, 
+                     duplicate_mode: str = 'stack', 
+                     dropbox_mode: bool = False) -> xr.Dataset:
+    """
+    Load data stored in SQLite using `pyPulses.core.database` into an xarray.Dataset
+    """
+
+    path = Path(path).with_suffix('.db')
+    try:
+        conn = sqlite3.connect(f'file:{path}?mode=ro', uri=True)
+    except sqlite3.DatabaseError as e:
+        if not dropbox_mode:
+            warnings.warn(
+                "DB and WAL files are inconsistent. Use `dropbox_mode`=True "
+                "to ignore WAL in favor of a stale view."
+            )
+            raise
+        warnings.warn(
+            "DB and WAL files are inconsistent. Returning a stale view."
+        )
+        
+        # Fallback: read only the main .db file bytes (ignoring WAL)
+        file_conn = sqlite3.connect(str(path))
+        # Create an in-memory DB
+        conn = sqlite3.connect(":memory:")
+        file_conn.backup(conn)
+        file_conn.close()
+
+    try:
+        cur = conn.cursor()
+
+        # load schema
+        cur.execute("SELECT value FROM metadata WHERE key = '__schema__'")
+        schema = json.loads(cur.fetchone()[0])
+
+        dims = schema['dims']
+
+        # load sweep data
+        df = pd.read_sql("SELECT * FROM sweep", conn)
+        if df.empty:
+            # handle the empty case
+            dims = schema['dims']
+            coords = {dim: np.arange(0) for dim in dims}
+            ds = xr.Dataset(coords=coords)
+        
+        else:
+            # Convert binary blobs to integers if necessary
+            for d in dims:
+                if df[d].dtype == 'object' and isinstance(df[d].iloc[0], (bytes, bytearray)):
+                    df[d] = df[d].apply(lambda x: np.frombuffer(x, dtype = '<i8')[0])
+
+
+            # drop id column if present
+            if 'id' in df.columns:
+                df = df.drop(columns = 'id')
+
+            # handle duplicates
+            if duplicate_mode in ('mean', 'max', 'min', 'median'):
+                numeric_cols = df.select_dtypes(include = np.number).columns.to_list()
+                agg_funcs = {col: duplicate_mode for col in numeric_cols}
+                if 'timestamp' in df.columns:
+                    agg_funcs['timestamp'] = 'last'
+                df = df.groupby(dims).agg(agg_funcs)
+
+            elif duplicate_mode == 'stack' and ('repeat' not in schema['dims']):
+                df = df.copy()
+                df['repeat'] = df.groupby(dims).cumcount()
+                df = df.set_index(dims + ['repeat'])
+                dims += ['repeat']
+
+            else:
+                df = df.set_index(dims)
+
+            ds = df.to_xarray().transpose(*dims)
+
+            # Ensure dims are plain integer coordinates, not binary junk
+            for dim in dims:
+                n_actual = int(ds.sizes.get(dim, 0))
+                if n_actual > 0:
+                    ds = ds.assign_coords({dim: np.arange(n_actual)})
+                else:
+                    ds = ds.assign_coords({dim: np.arange(0)})
+
+        # attach metadata
+        cur.execute("SELECT key, value FROM metadata")
+        for key, value in cur.fetchall():
+            if key == '__schema__':
+                continue
+            try:
+                ds.attrs[key] = json.loads(value)
+            except Exception:
+                ds.attrs[key] = value
+
+        cur.execute("SELECT var_name, key, value FROM var_metadata")
+        for var, key, value in cur.fetchall():
+            if var in ds:
+                try:
+                    ds[var].attrs[key] = json.loads(value)
+                except Exception:
+                    ds[var].attrs[key] = value
+
+        # promote physical coordinates to coords
+        for cname in schema['coord_names']:
+            if cname in ds:
+                ds = ds.set_coords(cname)
+
+    finally:
+        conn.close()
+
+    return ds
+
+def xarray_to_sqlite(ds: xr.Dataset, path: str | Path, overwrite: bool = False):
+    """
+    Save an xarray.Dataset to SQLite in the same schema `pyPulses.core.database`
+    """
+
+    path = Path(path).with_suffix('.db')
+    if path.exists():
+        if overwrite: 
+            path.unlink()
+        else:
+            raise FileExistsError(
+                f"{path} already exists. Use overwrite = True to replace."
+            )
+        
+    try:
+        conn = sqlite3.connect(path)
+        cur = conn.cursor()
+        # Explicitly use DELETE (rollback) journal mode so that no -wal/-shm
+        # files are created alongside the saved database.
+        cur.execute("PRAGMA journal_mode=DELETE")
+
+        # create schema tables
+        cur.execute("CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT)")
+        cur.execute(
+            "CREATE TABLE var_metadata (var_name TEXT, key TEXT, value TEXT, "
+            "PRIMARY KEY (var_name, key))"
+        )
+
+        # build schema from dataset
+        dims = list(ds.dims)
+        shape = [ds.sizes[d] for d in dims]
+        coord_names = [c for c in ds.coords if c not in dims]
+        data_names = list(ds.data_vars)
+
+        schema = {
+            'dims'       : dims,
+            'shape'      : shape,
+            'coord_names': coord_names,
+            'data_names' : data_names,
+            'timestamp'  : 'timestamp' in ds,
+            'version'    : 1.0,
+        }
+
+        cur.execute(
+            "INSERT INTO metadata (key, value) VALUES (?, ?)",
+            ('__schema__', json.dumps(schema)),
+        )
+
+        # global attributes
+        for k, v in ds.attrs.items():
+            cur.execute(
+                "INSERT INTO metadata (key, value) VALUES (?, ?)",
+                (k, json.dumps(_to_builtin(v))),
+            )
+
+        # variable attributes
+        for var in list(ds.coords) + list(ds.data_vars):
+            for k, v in ds[var].attrs.items():
+                cur.execute(
+                    "INSERT INTO var_metadata (var_name, key, value) VALUES (?, ?, ?)",
+                    (var, k, json.dumps(_to_builtin(v))),
+                )
+
+        # flatten dataset to dataframe
+        df = ds.to_dataframe().reset_index()
+
+        # store sweep table
+        df.to_sql('sweep', conn, if_exists = 'replace', index = False)
+        conn.commit()
+
+    finally:
+        conn.close()

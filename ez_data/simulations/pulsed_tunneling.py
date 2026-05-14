@@ -55,10 +55,19 @@ class softPulsePair():
         self._X = v
 
     def Y(self, v: float | None = None) -> float | None:
+        """
+        Y is subordinate to X. If asked to switch sign relative to its
+        current value, it zeroes itself instead — unless X is zero, in
+        which case Y is allowed to lead the polarity switch.
+        """
         if v is None:
             return self._Y
-        if self._Y*v < 0:
-            self._X = -self._X
+        if self._Y * v < 0:
+            if self._X != 0.0:
+                self._Y = 0.0
+                return
+            else:
+                self._X = -self._X
         self._Y = v
 
 class pulsedTunnelingBridge():

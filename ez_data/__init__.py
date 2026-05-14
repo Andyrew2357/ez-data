@@ -1,8 +1,7 @@
-from .dataset_connector import DsetConnector, sqlite_to_xarray, xarray_to_sqlite
 from .ezplt import errorplot, get_xr_label, waterfall
 from .smarty_sweep_utils import dat_to_pandas, pandas_to_xarray
 from .utils import (align_dims, apply_transform, apply_linear_transform, 
-                    bin_to_grid, smart_sel)
+                    bin_to_grid, smart_sel, sqlite_to_xarray, xarray_to_sqlite)
 
 __all__ = [
     "align_dims",
