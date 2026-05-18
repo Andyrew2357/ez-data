@@ -1,6 +1,8 @@
 from . import xr_tools
 from .extract_gap import mu, tl_model, lf_model, phase_correct
 from .ezplt import errorplot, style_xr_xlabel
+from .fitting import fit_peaks
+from .utils import apply_transform
 
 from matplotlib import colors
 import matplotlib.pyplot as plt
@@ -54,14 +56,18 @@ class GappedState():
         self._rough_y_mask = msk
 
     def refine_state_mask(self, nsigma: float = 2.0):
-        self._state_fit = self.ds.where(
+        masked_da = self.ds.where(
             self._rough_x_mask & self._rough_y_mask
-        )[self.k_chi_r].ez.fit_peaks(self.k_x, self.k_y)
-        self._refined_mask = (self._state_fit['peak_center'] - nsigma * \
-                              self._state_fit['peak_sigma'] < self.ds[self.k_x]) & \
-                             (self._state_fit['peak_center'] + nsigma * \
-                              self._state_fit['peak_sigma'] > self.ds[self.k_x]) & \
-                              self._rough_x_mask & self._rough_y_mask
+        )[self.k_chi_r]
+        self._state_fit = fit_peaks(masked_da, self.k_x, self.k_y)
+        self._refined_mask = (
+            (self._state_fit['peak_center'] - nsigma *
+             self._state_fit['peak_sigma'] < self.ds[self.k_x]) &
+            (self._state_fit['peak_center'] + nsigma *
+             self._state_fit['peak_sigma'] > self.ds[self.k_x]) &
+            self._rough_x_mask &
+            self._rough_y_mask
+        )
 
     def apply_rough_band_mask(self, msk: xr.DataArray):
         self._rough_band_mask = msk
@@ -233,8 +239,9 @@ class ezDatasetAccessor():
                       ) -> xr.Dataset:
         """Accessor to phase_correct"""
         chi = (k_chi_r, k_chi_i)
-        return self._obj.ez.transform(
-            lambda x, y: phase_correct(x, y, X_spur, Y_spur), 
+        return apply_transform(
+            self._obj.copy(),
+            lambda x, y: phase_correct(x, y, X_spur, Y_spur),
             chi, chi, xr_output_type='data_vars',
         )
     
@@ -244,7 +251,8 @@ class ezDatasetAccessor():
     ) -> xr.Dataset:
         chi = (k_chi_r, k_chi_i)
         s, c = np.sin(phi), np.cos(phi)
-        return self._obj.ez.transform(
+        return apply_transform(
+            self._obj.copy(),
             lambda x, y: (x*c - y*s, x*s + y*c),
             chi, chi, xr_output_type='data_vars',
         )
